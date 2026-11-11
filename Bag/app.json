@@ -101,6 +101,11 @@
         }
       ]
     ],
-    "scheme": "bag"
+    "scheme": "bag",
+    "extra": {
+      "eas": {
+        "projectId": "89a3a7c8-f9bf-4c32-8a6c-e8b38362ef2a"
+      }
+    }
   }
 }
