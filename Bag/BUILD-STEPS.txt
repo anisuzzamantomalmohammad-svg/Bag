@@ -1,0 +1,80 @@
+HOW TO BUILD THE BAG APK
+(same as Deen: build from GitHub on expo.dev)
+
+1. GITHUB
+   - Everything in this folder goes at the top of the "Bag" repo
+     (App.js, app.json, package.json, src/, assets/, docs/ ...).
+   - Website for the privacy policy: repo Settings > Pages >
+     Source "Deploy from a branch", branch main, folder /docs.
+     It shows up at
+     https://anisuzzamantomalmohammad-svg.github.io/Bag/privacy.html
+     (Settings > About > Privacy policy in the app opens this link.)
+
+2. EXPO PROJECT
+   - expo.dev > Projects > Create project, name "bag",
+     account anisuzzaman_tamal. Copy the project ID.
+   - In app.json add this inside "expo" (next to "plugins"):
+       "extra": { "eas": { "projectId": "PASTE-ID-HERE" } }
+     (Or run  eas init  once on a computer; it writes the same thing.)
+   - Project > GitHub: connect the Bag repo.
+
+3. FIRST BUILD (no Google sign-in yet)
+   - expo.dev > Bag > Builds > Build from GitHub:
+       platform Android, branch main, base directory /  (leave blank),
+       profile preview.
+   - "Generate a new Android Keystore?" -> Yes. Keep this Expo account:
+     it holds the signing key, and updates must use the same key.
+   - Install the APK from the link. Everything works except
+     "Sign in with Google", which says it isn't set up in this build.
+
+4. TURN ON GOOGLE SIGN-IN (optional, do it after the first build)
+   a. expo.dev > Bag > Credentials > Android > com.tomal.bag:
+      copy the SHA-1 fingerprint of the keystore.
+   b. console.cloud.google.com > new project "Bag".
+   c. APIs & Services > Library > Google Drive API > Enable.
+   d. OAuth consent screen (Google Auth Platform):
+        app name Bag, your email, home page
+        https://anisuzzamantomalmohammad-svg.github.io/Bag/,
+        privacy policy
+        https://anisuzzamantomalmohammad-svg.github.io/Bag/privacy.html
+        Data access > add scope .../auth/drive.appdata
+        Audience: External, add your Gmail as a test user.
+   e. Clients > Create client > Android:
+        package name  com.tomal.bag
+        SHA-1         the one from step a
+   f. Clients > Create client > Web application, name "Bag web".
+      Copy its Client ID (ends in .apps.googleusercontent.com).
+   g. Paste it in src/lib/config.js:
+        export const GOOGLE_WEB_CLIENT_ID = '....apps.googleusercontent.com';
+      Commit, push, and build again (step 3). Install over the old one.
+   Google sign-in only works in builds signed with that keystore. Don't
+   create new build credentials, or sign-in breaks.
+
+CHECK ON THE PHONE AFTER INSTALLING
+1. Setup: home currency NZD, first account and what's in it now. Tick
+   "Bring records in from Excel" to import the cash book.
+   (BDT is off until Settings > Money > Second currency.)
+2. Import: pick Cash_Book_fixed.xlsx. Check the numbers (balance after
+   import should be -271.25), then Import.
+3. Home: tap + and tap Name: your 5 most used names show before you type.
+   Type "Countdown 45.20" and the 45.20 moves into Amount.
+   Add a receipt with Camera or Photos.
+   Week / Month / Total under the balance; tap Cash out to see those records.
+4. Add your salary as Income, Repeats > Weekly (or Custom). On payday Bag
+   asks "Did it arrive?" in Coming up.
+5. Owed: add a bill under I owe, then Mark paid from its page. Undo works.
+6. Reports: Weekly, Monthly, Cumulative. Tap a point on the chart.
+7. Plan: set a Groceries budget, start a goal.
+8. Records: the date pill picks any two dates. Download icon > Excel.
+9. Settings: App lock, dark mode, Customise. Money > Second currency on,
+   then pick where it shows.
+10. Widget: long-press the home screen > Widgets > Bag. Drag it out (4x4).
+    Tap Week / Month / All time on it, + Add, a bill, Cash in.
+    If it says "Bag is locked", App lock is on: Settings > Lock and
+    privacy > Show numbers on the widget.
+
+LATER
+- Next update: raise "version" and "versionCode" in app.json (1.0.1 and 2),
+  push, build again. Installing over the old APK keeps your records.
+- Try it without building: npx expo start, then scan the QR code with
+  Expo Go (Google sign-in and the lock need a real build).
