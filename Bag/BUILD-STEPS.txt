@@ -6,8 +6,9 @@ HOW TO BUILD THE BAG APK
      (App.js, app.json, package.json, src/, assets/, docs/ ...).
    - Website for the privacy policy: repo Settings > Pages >
      Source "Deploy from a branch", branch main, folder /docs.
-     It shows up at
-     https://anisuzzamantomalmohammad-svg.github.io/Bag/privacy.html
+     If the files sit inside a "Bag" folder in the repo (base directory
+     /Bag on Expo), choose folder / (root) instead. The page is then at
+     https://anisuzzamantomalmohammad-svg.github.io/Bag/Bag/docs/privacy.html
      (Settings > About > Privacy policy in the app opens this link.)
 
 2. EXPO PROJECT
@@ -73,7 +74,15 @@ CHECK ON THE PHONE AFTER INSTALLING
     If it says "Bag is locked", App lock is on: Settings > Lock and
     privacy > Show numbers on the widget.
 
-LATER
+UPDATING (1.0.1 and later)
+1. On GitHub, open the folder that holds App.js (Bag / Bag).
+2. Add file > Upload files. Drag in everything from the new zip's Bag
+   folder. GitHub replaces the files with the same names. Commit.
+3. expo.dev > bag > Build from GitHub: base directory /Bag, Android,
+   main, preview. Use the same keystore (don't make a new one).
+4. Install the new APK over the old one. Your records stay.
+5. First time after 1.0.1: Settings > Account > Sign in with Google.
+
 - Next update: raise "version" and "versionCode" in app.json (1.0.1 and 2),
   push, build again. Installing over the old APK keeps your records.
 - Try it without building: npx expo start, then scan the QR code with

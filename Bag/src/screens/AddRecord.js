@@ -68,6 +68,10 @@ export default function AddRecord({ id, type: startType, prefill }) {
   const [splitShare, setSplitShare] = useState('');
   const [nameFocus, setNameFocus] = useState(false);
   const [descFocus, setDescFocus] = useState(false);
+  const [hintAmount, setHintAmount] = useState('');
+  // Repeats, split, description and receipt sit behind "More options". Open
+  // when this record already uses one, or when you used them last time.
+  const [more, setMore] = useState(old ? !!(old.repeatId || old.description || ((data.photos || {})[old.id] || []).length) : !!data.addMore);
   // Receipt photos: the ones already saved, new ones, and ones to remove.
   const [photos, setPhotos] = useState(old ? (data.photos || {})[old.id] || [] : []);
   const savedPhotos = old ? (data.photos || {})[old.id] || [] : [];
@@ -92,12 +96,17 @@ export default function AddRecord({ id, type: startType, prefill }) {
   // Before typing: your most used names. While typing: names that match.
   const suggestions = useMemo(() => (nameFocus ? nameSuggestions(data, name, type === 'transfer' ? null : type).filter((s) => s.name.toLowerCase() !== name.trim().toLowerCase()) : []), [nameFocus, name, type]);
   const descs = useMemo(() => (descFocus ? descriptionSuggestions(data, description, name) : []), [descFocus, description, name]);
+  // An amount Bag can offer but never fills in by itself: a number typed
+  // after the name ("Countdown 45.20"), or what this name cost last time.
   const typedAmount = !amount ? splitNameAmount(name) : null;
-
-  // "Countdown 45.20" puts 45.20 in Amount.
-  const takeAmountFromName = () => {
-    const m = !amount ? splitNameAmount(name) : null;
-    if (m) { setName(m.name); setAmount(m.amount); }
+  const offer = amount ? null : typedAmount ? { amount: typedAmount.amount, name: typedAmount.name, why: 'from the name' } : hintAmount ? { amount: hintAmount, why: 'last time' } : null;
+  const useOffer = () => {
+    if (!offer) return;
+    dirty.current = true;
+    setErrors({});
+    setAmount(offer.amount);
+    if (offer.name) setName(offer.name);
+    setHintAmount('');
   };
   const addPhoto = async (from) => {
     try {
@@ -116,7 +125,7 @@ export default function AddRecord({ id, type: startType, prefill }) {
     setName(s.name);
     if (data.defaults.fillCategory !== false && s.categoryId && data.categories[s.categoryId] && !data.categories[s.categoryId].deleted) setCategoryId(s.categoryId);
     if (s.accountId && data.accounts[s.accountId] && !data.accounts[s.accountId].deleted) setAccountId(s.accountId);
-    if (!amount && s.amount) setAmount(String(s.amount));
+    if (!amount && s.amount) setHintAmount(String(s.amount));
     setNameFocus(false);
   };
 
@@ -139,10 +148,9 @@ export default function AddRecord({ id, type: startType, prefill }) {
 
   const save = () => {
     const e = {};
-    const fromName = !(amt > 0) ? splitNameAmount(name) : null;
-    const amtUse = fromName ? parseAmount(fromName.amount) : amt;
-    const nameUse = fromName ? fromName.name : name;
-    if (!(amtUse > 0)) e.amount = 'Enter an amount';
+    const amtUse = amt;
+    const nameUse = name;
+    if (!(amtUse > 0)) e.amount = offer ? `Enter an amount, or tap “Use ${offer.amount}”` : 'Enter an amount';
     if (type === 'transfer') {
       if (!accountId || !toAccountId) e.account = 'Pick both accounts';
       else if (accountId === toAccountId) e.account = 'Pick two different accounts';
@@ -164,6 +172,7 @@ export default function AddRecord({ id, type: startType, prefill }) {
       rateManual: foreign && !!rateText, rate: foreign ? rate || 1 : 1,
     };
     const savedId = app.saveRecord(draft, { repeat: rule(), split: split ? { who: splitWho.trim(), share } : undefined });
+    if (!old) app.update({ addMore: !!(preset !== 'never' || split || description.trim() || photos.length) });
     if (savedId) {
       photos.filter((u) => !savedPhotos.includes(u)).forEach((u) => app.addPhoto(savedId, u));
       savedPhotos.filter((u) => !photos.includes(u)).forEach((u) => app.removePhoto(savedId, u));
@@ -204,7 +213,7 @@ export default function AddRecord({ id, type: startType, prefill }) {
           value={amount}
           onChangeText={touch(setAmount)}
           keyboardType="decimal-pad"
-          placeholder="0.00"
+          placeholder={offer ? offer.amount : '0.00'}
           placeholderTextColor={th.faint2}
           accessibilityLabel="Amount"
           autoFocus={!old}
@@ -213,6 +222,11 @@ export default function AddRecord({ id, type: startType, prefill }) {
         <Pressable onPress={() => nav.openSheet('currency', { onPick: (c) => { dirty.current = true; setCurrency(c); setRateText(''); } })} accessibilityRole="button" accessibilityLabel={`Currency ${currency}`} style={{ minHeight: 36, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: th.lineStrong, backgroundColor: th.card, justifyContent: 'center' }}>
           <T size={13} weight="semi" color={th.muted}>{currency} ▾</T>
         </Pressable>
+        {offer ? (
+          <Pressable onPress={useOffer} accessibilityRole="button" accessibilityLabel={`Use ${offer.amount} as the amount, ${offer.why}`} style={{ marginTop: 8, minHeight: 36, paddingHorizontal: 14, borderRadius: 999, backgroundColor: th.accentSoft, justifyContent: 'center' }}>
+            <T size={13} weight="medium" color={th.accent}>Use {offer.amount} · {offer.why}</T>
+          </Pressable>
+        ) : null}
         {errors.amount ? <T size={13} color={th.danger} style={{ marginTop: 6 }}>{errors.amount}</T> : null}
         {foreign ? (
           <Pressable onPress={() => nav.openSheet('rate', { currency, home, value: rateText || (autoRate ? String(autoRate) : ''), onPick: (v) => { dirty.current = true; setRateText(v); } })} accessibilityRole="button" style={{ marginTop: 8 }}>
@@ -226,8 +240,7 @@ export default function AddRecord({ id, type: startType, prefill }) {
 
       {type !== 'transfer' ? (
         <View>
-          <Field label="Name" value={name} onChangeText={touch(setName)} onFocus={() => setNameFocus(true)} onBlur={() => { takeAmountFromName(); setTimeout(() => setNameFocus(false), 150); }} placeholder={type === 'income' ? 'Salary' : type === 'iowe' ? 'Phone bill' : type === 'owed' ? 'Dinner split' : 'Grocery'} autoCapitalize="sentences" />
-          {typedAmount && nameFocus ? <T size={13} color={th.faint} style={{ marginTop: 6, marginHorizontal: 4 }}>{typedAmount.amount} goes into Amount</T> : null}
+          <Field label="Name" value={name} onChangeText={(v) => { dirty.current = true; setErrors({}); setHintAmount(''); setName(v); }} onFocus={() => setNameFocus(true)} onBlur={() => setTimeout(() => setNameFocus(false), 150)} placeholder={type === 'income' ? 'Salary' : type === 'iowe' ? 'Phone bill' : type === 'owed' ? 'Dinner split' : 'Grocery'} autoCapitalize="sentences" />
           {suggestions.length ? (
             <Card pad={0} style={{ marginTop: 6, paddingHorizontal: 14 }}>
               {suggestions.map((s, i) => {
@@ -263,6 +276,8 @@ export default function AddRecord({ id, type: startType, prefill }) {
           <Row label="Date" value={date === today() ? `Today, ${fmtShort(date)}` : fmtShort(date, { weekday: true })} onPress={() => nav.openSheet('date', { value: date, onPick: touch(setDate) })} />
         )}
         {type !== 'transfer' ? <Row label={ACCOUNT_LABEL[subKind] || 'Account'} value={acc && !acc.deleted ? acc.name : 'Choose'} valueColor={errors.account ? th.danger : undefined} onPress={() => pickAccount(setAccountId, ACCOUNT_LABEL[subKind])} /> : null}
+        {more ? (
+          <>
         <Row label="Repeats" value={repeatLabel} onPress={() => setRepeatOpen(!repeatOpen)} right={null} chevron={false} />
         {repeatOpen ? (
           <Chips style={{ paddingBottom: 14 }}>
@@ -286,9 +301,16 @@ export default function AddRecord({ id, type: startType, prefill }) {
             {errors.split ? <T size={13} color={th.danger}>{errors.split}</T> : null}
           </View>
         ) : null}
+          </>
+        ) : null}
+        <Pressable onPress={() => setMore(!more)} accessibilityRole="button" accessibilityState={{ expanded: more }} style={{ minHeight: 48, justifyContent: 'center', borderTopWidth: 1, borderTopColor: th.line }}>
+          <T size={14} weight="medium" color={th.accent}>{more ? 'Fewer options' : type === 'expense' && !old ? 'More options: repeat, split, receipt, description' : type === 'transfer' ? 'More options: repeat, description' : 'More options: repeat, receipt, description'}</T>
+        </Pressable>
       </Card>
+      {!isDebt && date > today() ? <T size={13} color={th.faint} style={{ marginHorizontal: 4, marginTop: -4 }}>That's a future date, so it waits as Scheduled and counts from {fmtShort(date)}.</T> : null}
       {errors.account || errors.category || errors.who ? <T size={13} color={th.danger} style={{ marginTop: -4 }}>{errors.account || errors.category || errors.who}</T> : null}
 
+      {more ? (
       <View>
         <Field label="Description" value={description} onChangeText={touch(setDescription)} onFocus={() => setDescFocus(true)} onBlur={() => setTimeout(() => setDescFocus(false), 150)} placeholder="Optional" multiline inputStyle={{ paddingTop: 14, paddingBottom: 14 }} />
         {descs.length ? (
@@ -297,8 +319,9 @@ export default function AddRecord({ id, type: startType, prefill }) {
           </Chips>
         ) : null}
       </View>
+      ) : null}
 
-      {type !== 'transfer' ? (
+      {more && type !== 'transfer' ? (
         <Card>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <T>Receipt</T>

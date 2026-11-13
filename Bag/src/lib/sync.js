@@ -15,7 +15,7 @@ export const WHOLE_FIELDS = ['homeCurrency', 'secondCurrency', 'weekStart', 'mon
 export const PER_PHONE = [
   'themeMode', 'accent', 'moneyColours', 'textSize', 'lock', 'reminders', 'homeCards', 'defaults', 'numbers', 'swipe',
   'reportsView', 'google', 'lastSyncAt', 'syncStamps', 'dirtyAt', 'lastDriveBackupAt', 'lastAccountId', 'notifAsked', 'tipsSeen',
-  'secondOn', 'secondShow', 'homePeriod', 'photos',
+  'secondOn', 'secondShow', 'homePeriod', 'photos', 'addMore',
 ];
 
 const eq = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);

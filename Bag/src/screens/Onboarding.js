@@ -54,7 +54,7 @@ export default function Onboarding() {
     }
     const o = opening.trim() ? parseAmount(opening) : 0;
     app.update({ homeCurrency: home, reminders: { ...app.data.reminders, on: !!reminders } });
-    if (accName.trim()) app.saveAccount({ name: accName.trim(), currency: home, opening: Number.isNaN(o) ? 0 : o, openingDate: today() });
+    app.saveAccount({ name: accName.trim() || 'Everyday', currency: home, opening: Number.isNaN(o) ? 0 : o, openingDate: today() });
     app.update({ onboarded: true });
     if (importAfter) setTimeout(() => nav.push('import'), 400);
   };

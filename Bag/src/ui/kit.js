@@ -321,7 +321,7 @@ export function Toast({ toast, onHide }) {
       pointerEvents={toast.action ? 'box-none' : 'none'}
       accessibilityLiveRegion="polite"
       style={{
-        position: 'absolute', left: 16, right: 16, bottom: insets.bottom + 148, zIndex: 50, opacity: a,
+        position: 'absolute', left: 16, right: 80, bottom: insets.bottom + 68, zIndex: 50, opacity: a,
         transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
         backgroundColor: dark ? '#D6E3F0' : '#1A2230', borderRadius: 14, minHeight: 50, paddingLeft: 16, paddingRight: 6, flexDirection: 'row', alignItems: 'center',
       }}

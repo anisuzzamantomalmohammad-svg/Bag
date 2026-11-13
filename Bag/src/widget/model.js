@@ -1,6 +1,6 @@
 // What the home screen widget shows, worked out from the saved data. Kept
 // free of React and Android code so it can be tested and reused.
-import { allFlows, comingUp, incomeExpense, liveRecords, totalBalance } from '../lib/ledger';
+import { allFlows, comingUp, displayName, incomeExpense, liveRecords, totalBalance } from '../lib/ledger';
 import { addDays, addMonths, daysBetween, fmtShort, lastDayOfMonth, monthLabel, MONTHS, parseYmd, periodOf, today as todayYmd } from '../lib/dates';
 import { fmt, round2 } from '../lib/money';
 
@@ -88,7 +88,7 @@ export function widgetModel(data, { now = todayYmd(), view = 'month', homePerUni
     const day = it.date === now ? 'Today' : it.date === addDays(now, 1) ? 'Tomorrow' : d.toLocaleDateString('en-NZ', { weekday: 'short' });
     return {
       key: it.key,
-      name: it.kind === 'owedToMe' && r.who ? `${r.who} owes you` : r.name || 'Repeat',
+      name: it.kind === 'owedToMe' && r.who ? `${r.who} owes you` : displayName(r, data) || 'Repeat',
       emoji: r.type === 'transfer' ? '🔀' : c && !c.deleted ? c.emoji : it.kind === 'owedToMe' ? '🤝' : '🏷️',
       sub: it.date < now ? `Overdue · ${fmtShort(it.date)}` : day,
       amount: `${incoming ? '+' : '−'}${n(a)}`,

@@ -1,20 +1,19 @@
-// Owed: one list of what you owe and what's owed to you, with filter chips,
-// and a calendar of bills and repeats.
+// Owed: one list of what you owe and what's owed to you (overdue first),
+// three chips to narrow it, and a calendar behind the icon at the top.
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Amount, Card, Chip, Chips, Empty, Row, Seg, T, useTheme } from '../ui/kit';
-import { Fab, RecordRow, TabTitle } from '../ui/parts';
+import { Amount, Card, Chip, Chips, Empty, Row, T, useTheme } from '../ui/kit';
+import { Fab, IconButton, RecordRow, TabTitle } from '../ui/parts';
 import { Calendar } from '../ui/calendar';
-import { homeOf, isOpen, liveRecords, live, effectiveDate } from '../lib/ledger';
+import { displayName, homeOf, isOpen, liveRecords, live, effectiveDate } from '../lib/ledger';
 import { nextDates } from '../lib/repeats';
 import { addDays, fmtDate, lastDayOfMonth, today } from '../lib/dates';
 import { round2 } from '../lib/money';
-import { useSwipeAction } from './Home';
 
-const FILTERS = [['all', 'All open'], ['owed', 'Owed to me'], ['iowe', 'I owe'], ['overdue', 'Overdue'], ['settled', 'Settled']];
+const FILTERS = [['owed', 'To me'], ['iowe', 'I owe'], ['settled', 'Settled']];
 
 export default function Owed() {
   const app = useApp();
@@ -22,7 +21,6 @@ export default function Owed() {
   const th = useTheme();
   const insets = useSafeAreaInsets();
   const { data } = app;
-  const swipe = useSwipeAction();
   const now = today();
   const [view, setView] = useState('list');
   const [filter, setFilter] = useState('all');
@@ -44,7 +42,7 @@ export default function Owed() {
   const list = useMemo(() => {
     if (filter === 'settled') return debts.filter((r) => r.status === 'settled').sort((a, b) => (effectiveDate(a) < effectiveDate(b) ? 1 : -1));
     return open
-      .filter((r) => (filter === 'all' ? true : filter === 'overdue' ? (r.dueDate || r.date) < now : r.type === filter))
+      .filter((r) => (filter === 'all' ? true : r.type === filter))
       .sort((a, b) => ((a.dueDate || a.date) < (b.dueDate || b.date) ? -1 : 1));
   }, [debts, filter]);
 
@@ -75,34 +73,34 @@ export default function Owed() {
 
   return (
     <View style={{ flex: 1, backgroundColor: th.bg, paddingTop: insets.top }}>
-      <TabTitle title="Owed" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 100, gap: 12 }}>
+      <TabTitle title="Owed">
+        <IconButton name={view === 'calendar' ? 'list' : 'calendar'} label={view === 'calendar' ? 'Show the list' : 'Show the calendar'} onPress={() => setView(view === 'calendar' ? 'list' : 'calendar')} />
+      </TabTitle>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 96, gap: 12 }}>
         <Card style={{ flexDirection: 'row', gap: 12 }}>
           <Pressable style={{ flex: 1 }} onPress={() => { setView('list'); setFilter(filter === 'owed' ? 'all' : 'owed'); }} accessibilityRole="button" accessibilityLabel="Show money owed to me">
             <T size={12} color={th.muted} style={{ letterSpacing: 0.8 }}>Owed to me</T>
             <Amount value={totals.owed} kind="neutral" size={20} serif plus={false} />
             <T size={13} color={th.faint}>{totals.owedPeople.size} {totals.owedPeople.size === 1 ? 'person' : 'people'}</T>
           </Pressable>
-          <Pressable style={{ flex: 1 }} onPress={() => { setView('list'); setFilter(totals.overdue ? 'overdue' : filter === 'iowe' ? 'all' : 'iowe'); }} accessibilityRole="button" accessibilityLabel="Show what I owe">
+          <Pressable style={{ flex: 1 }} onPress={() => { setView('list'); setFilter(filter === 'iowe' ? 'all' : 'iowe'); }} accessibilityRole="button" accessibilityLabel="Show what I owe">
             <T size={12} color={th.muted} style={{ letterSpacing: 0.8 }}>I owe</T>
             <Amount value={totals.iowe} kind="neutral" size={20} serif plus={false} />
             <T size={13} color={totals.overdue ? th.out : th.faint}>{totals.overdue ? `${totals.overdue} overdue` : 'Nothing overdue'}</T>
           </Pressable>
         </Card>
-        <Seg items={[{ id: 'list', label: 'List' }, { id: 'calendar', label: 'Calendar' }]} value={view} onChange={setView} />
-
         {view === 'list' ? (
           <>
-            <Chips>{FILTERS.map(([f, l]) => <Chip key={f} label={l} on={filter === f} onPress={() => setFilter(f)} />)}</Chips>
+            <Chips>{FILTERS.map(([f, l]) => <Chip key={f} label={l} on={filter === f} onPress={() => setFilter(filter === f ? 'all' : f)} />)}</Chips>
             {list.length ? (
               <Card pad={0} style={{ paddingHorizontal: 16, paddingVertical: 2 }}>
-                {list.map((r, i) => <RecordRow key={r.id} record={r} first={i === 0} onPress={() => nav.push('record', { id: r.id })} onSwipe={swipe} />)}
+                {list.map((r, i) => <RecordRow key={r.id} record={r} first={i === 0} onPress={() => nav.push('record', { id: r.id })} />)}
               </Card>
             ) : (
               <Empty
-                title={filter === 'settled' ? 'Nothing settled yet' : filter === 'overdue' ? 'Nothing overdue' : 'All clear'}
+                title={filter === 'settled' ? 'Nothing settled yet' : 'All clear'}
                 text={filter === 'settled' ? 'Debts you mark paid or received show here.' : 'Add a bill you need to pay, or money someone owes you.'}
-                action={filter === 'settled' || filter === 'overdue' ? undefined : filter === 'owed' ? 'Add money owed to me' : 'Add something I owe'}
+                action={filter === 'settled' ? undefined : filter === 'owed' ? 'Add money owed to me' : 'Add something I owe'}
                 onAction={() => nav.push('add', { type: addType })}
               />
             )}
@@ -121,7 +119,7 @@ export default function Owed() {
               <T size={13} weight="semi" color={th.muted}>{fmtDate(day, { weekday: true, year: false })}</T>
               {dayItems.length ? dayItems.map((it, i) => (it.record
                 ? <RecordRow key={it.key} record={it.record} first={i === 0} onPress={() => nav.push('record', { id: it.record.id })} />
-                : <Row key={it.key} first={i === 0} minHeight={60} label={it.repeat.template.name || 'Repeat'} sub="Repeats" onPress={() => nav.push('repeat', { id: it.repeat.id })} chevron={false}
+                : <Row key={it.key} first={i === 0} minHeight={60} label={displayName(it.repeat.template, data) || 'Repeat'} sub="Repeats" onPress={() => nav.push('repeat', { id: it.repeat.id })} chevron={false}
                   value={<Amount value={it.repeat.template.type === 'income' ? it.repeat.template.amount : -it.repeat.template.amount} currency={it.repeat.template.currency} />} />))
                 : <T size={14} color={th.faint} style={{ paddingVertical: 12 }}>{day < now ? 'Nothing was due' : 'Nothing due'}</T>}
             </Card>

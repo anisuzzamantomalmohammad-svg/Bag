@@ -1,7 +1,7 @@
 // Bag: personal money records. App shell: fonts, theme, tabs, sub-screens,
 // sheets, the lock screen and the toast. Built the same way as Deen.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Linking, Platform, StatusBar, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Linking, PanResponder, Platform, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Notifications from 'expo-notifications';
@@ -29,6 +29,7 @@ Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false }),
 });
 
+const TAB_ORDER = ['Home', 'Records', 'Owed', 'Plan', 'Reports'];
 const TAB_SCREENS = { Home: HomeScreen, Records: RecordsScreen, Owed: OwedScreen, Plan: PlanScreen, Reports: ReportsScreen };
 
 // Sub-screens load the first time they're opened.
@@ -40,7 +41,6 @@ const STACK_SCREENS = {
   account: () => require('./src/screens/AccountEdit').default,
   categories: () => require('./src/screens/Categories').default,
   settings: () => require('./src/screens/Settings').default,
-  customise: () => require('./src/screens/Customise').default,
   import: () => require('./src/screens/Import').default,
   repeat: () => require('./src/screens/RepeatEdit').default,
   budget: () => require('./src/screens/BudgetEdit').default,
@@ -139,6 +139,19 @@ function Shell() {
     }
   }, [app.pendingOpen, app.data.onboarded, app.locked]);
 
+  // Swipe left or right on a tab to move to the next one. Only clearly
+  // sideways drags count, so scrolling up and down is left alone.
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  const swipe = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 28 && Math.abs(g.dx) > Math.abs(g.dy) * 2.5,
+    onPanResponderRelease: (_, g) => {
+      if (Math.abs(g.dx) < 70 && Math.abs(g.vx) < 0.5) return;
+      const i = TAB_ORDER.indexOf(tabRef.current) + (g.dx < 0 ? 1 : -1);
+      if (i >= 0 && i < TAB_ORDER.length) { setTabState(TAB_ORDER[i]); setTabParams({}); }
+    },
+  }), []);
+
   const nav = { tab, setTab, push, pop, popTo, openSheet, closeSheet };
   const Tab = TAB_SCREENS[tab];
   const topOpen = stack.some((e) => !e.closing);
@@ -150,7 +163,7 @@ function Shell() {
           <Onboarding />
         ) : (
           <>
-            <View style={{ flex: 1 }}><Tab {...tabParams} /></View>
+            <View style={{ flex: 1 }} {...(topOpen ? {} : swipe.panHandlers)}><Tab {...tabParams} /></View>
             {!topOpen ? <TabBar active={tab} onChange={(id) => (id === tab ? setStack([]) : setTab(id))} /> : null}
             {stack.map((e) => (
               <StackLayer key={e.key} entry={e} closing={!!e.closing} onClosed={() => setStack((s) => s.filter((x) => x.key !== e.key))} />

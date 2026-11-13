@@ -70,7 +70,7 @@ export default function AccountEdit({ id }) {
       ) : null}
       <Field label="Name" value={name} onChangeText={touch(setName)} placeholder="Cash, ANZ, Savings" autoFocus={!old} autoCapitalize="words" />
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
-        <Row first label="Currency" value={`${currency} · ${currencyName(currency)}`} onPress={() => nav.openSheet('currency', { value: currency, onPick: touch(setCurrency) })} />
+        <Row first label="Currency" value={`${currency} · ${currencyName(currency)}`} sub={old && recs.length ? 'Fixed once the account has records' : undefined} onPress={old && recs.length ? undefined : () => nav.openSheet('currency', { value: currency, onPick: touch(setCurrency) })} />
         <Row label="Opening balance" right={
           <Field value={opening} onChangeText={touch(setOpening)} keyboardType="numbers-and-punctuation" placeholder="0.00" inputStyle={{ minHeight: 40, minWidth: 120, textAlign: 'right', paddingHorizontal: 0, backgroundColor: 'transparent' }} accessibilityLabel="Opening balance" />
         } />

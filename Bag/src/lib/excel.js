@@ -296,7 +296,8 @@ export function planImport(data, { rows, format }) {
     if (type === 'expense') rec.status = st === 'pending' ? 'pending' : 'paid';
     else if (type === 'income') rec.status = st === 'pending' ? 'pending' : 'received';
     else if (type === 'transfer') rec.status = 'paid';
-    else {
+    if ((type === 'expense' || type === 'income' || type === 'transfer') && rec.status !== 'pending' && date > todayYmd()) rec.status = 'scheduled';
+    if (type === 'iowe' || type === 'owed') {
       rec.status = st === 'settled' ? 'settled' : 'open';
       rec.dueDate = toYmd(o['due date']) || null;
       if (rec.status === 'settled') rec.settledDate = toYmd(o['settled date']) || date;

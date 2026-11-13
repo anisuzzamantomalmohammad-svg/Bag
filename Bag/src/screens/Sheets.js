@@ -7,7 +7,7 @@ import { useApp } from '../state/store';
 import { useNav } from '../nav';
 import { Button, Chip, Chips, Field, Icon, IconBox, Row, Seg, Sheet, T, Toggle, useTheme } from '../ui/kit';
 import { Calendar } from '../ui/calendar';
-import { accountBalance, live } from '../lib/ledger';
+import { accountBalance, displayName, live } from '../lib/ledger';
 import { addDays, addMonths, fmtDate, fmtShort, periodOf, today } from '../lib/dates';
 import { parseAmount } from '../lib/money';
 import { currencyName, sortedCurrencies } from '../data/currencies';
@@ -313,7 +313,7 @@ const KINDS = {
   text: { title: (p) => p.title, C: TextSheet },
   rate: { title: () => 'Exchange rate', C: RateSheet },
   range: { title: () => 'Dates', C: RangeSheet },
-  confirm: { title: (p, data) => { const r = data.records[p.id]; return r ? `${r.name || 'This'}: did it ${r.type === 'income' ? 'arrive' : 'go out'}?` : 'Check'; }, C: ConfirmSheet },
+  confirm: { title: (p, data) => { const r = data.records[p.id]; return r ? `${displayName(r, data)}: did it ${r.type === 'income' ? 'arrive' : 'go out'}?` : 'Check'; }, C: ConfirmSheet },
   settle: { title: (p, data) => { const r = data.records[p.id]; return r && r.type === 'owed' ? 'Mark received' : 'Mark paid'; }, C: SettleSheet },
   export: { title: () => 'Export to Excel', C: ExportSheet },
 };

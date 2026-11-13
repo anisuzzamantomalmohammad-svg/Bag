@@ -19,7 +19,7 @@ import { nextDates } from './repeats';
 export const TYPES = ['expense', 'income', 'iowe', 'owed', 'transfer'];
 export const TYPE_LABEL = { expense: 'Expense', income: 'Income', iowe: 'I owe', owed: 'Owed to me', transfer: 'Transfer' };
 export const KIND_LABEL = { bill: 'Bill', borrowed: 'Borrowed money', lent: 'Lent or split', work: 'Payment for work' };
-export const STATUS_LABEL = { paid: 'Paid', received: 'Received', pending: 'Pending', open: 'Open', settled: 'Settled', skipped: 'Skipped' };
+export const STATUS_LABEL = { paid: 'Paid', received: 'Received', pending: 'Pending', scheduled: 'Scheduled', open: 'Open', settled: 'Settled', skipped: 'Skipped' };
 
 export const live = (coll) => Object.values(coll || {}).filter((x) => x && !x.deleted);
 export const liveRecords = (data) => live(data.records);
@@ -29,6 +29,20 @@ export const defaultKind = (type) => (type === 'iowe' ? 'bill' : type === 'owed'
 export const kindOf = (r) => r.kind || defaultKind(r.type);
 export const isOpen = (r) => (r.type === 'iowe' || r.type === 'owed') && r.status !== 'settled' && !r.deleted && r.status !== 'skipped';
 export const isPending = (r) => r.status === 'pending' && !r.deleted;
+// Dated in the future: shows under Coming up and counts for nothing until its day.
+export const isScheduled = (r) => r.status === 'scheduled' && !r.deleted;
+const waiting = (r) => r.status === 'pending' || r.status === 'scheduled';
+export const isMoneyType = (t) => t === 'expense' || t === 'income' || t === 'transfer';
+
+// What to call a record: its name, or its category when it has none.
+export function displayName(r, data) {
+  if (r && r.name) return r.name;
+  if (!r) return '';
+  if (r.type === 'transfer') return 'Transfer';
+  const c = data && data.categories ? data.categories[r.categoryId] : null;
+  if (c && !c.deleted) return c.name;
+  return r.who || TYPE_LABEL[r.type] || 'Record';
+}
 
 // Status shown for a record, including Overdue for open debts past their date.
 export function statusOf(r, now = todayYmd()) {
@@ -47,11 +61,11 @@ export function flowsOf(r) {
   const settleAcc = r.settledAccountId || r.accountId;
   switch (r.type) {
     case 'expense':
-      return r.status === 'pending' ? [] : [flow(r.date, r.accountId, -1, 'expense')];
+      return waiting(r) ? [] : [flow(r.date, r.accountId, -1, 'expense')];
     case 'income':
-      return r.status === 'pending' ? [] : [flow(r.date, r.accountId, 1, 'income')];
+      return waiting(r) ? [] : [flow(r.date, r.accountId, 1, 'income')];
     case 'transfer': {
-      if (r.status === 'pending') return [];
+      if (waiting(r)) return [];
       // Into an account in another currency: use what arrived if it was typed,
       // otherwise leave it in the sending currency so the balance converts it.
       const known = r.toAmount !== undefined && r.toAmount !== null && Number(r.toAmount) > 0;
@@ -202,6 +216,8 @@ export function comingUp(data, { days = 14, now = todayYmd() } = {}) {
       if (d <= until) items.push({ key: r.id, date: d, record: r, kind: r.type === 'iowe' ? 'due' : 'owedToMe' });
     } else if (isPending(r)) {
       items.push({ key: r.id, date: r.date, record: r, kind: 'pending' });
+    } else if (isScheduled(r) && r.date <= until) {
+      items.push({ key: r.id, date: r.date, record: r, kind: 'scheduled' });
     }
   });
   live(data.repeats).forEach((rep) => {
@@ -218,7 +234,7 @@ export function comingUp(data, { days = 14, now = todayYmd() } = {}) {
 /* ------------------------------ Budgets ------------------------------ */
 
 export function budgetStatus(data, budget, { now = todayYmd(), flows = allFlows(data) } = {}) {
-  const opts = { weekStart: data.weekStart || 1, monthStart: data.monthStartDay || 1 };
+  const opts = { weekStart: data.weekStart === 0 ? 0 : data.weekStart || 1, monthStart: data.monthStartDay || 1 };
   const period = budget.period === 'week' ? 'week' : 'month';
   const { from, to } = periodOf(now, period, opts);
   const spentIn = (a, b) => round2(flows.reduce((s, f) => (f.count === 'expense' && f.categoryId === budget.categoryId && inRange(f.date, a, b) ? s - f.home : s), 0));
@@ -235,7 +251,7 @@ export function budgetStatus(data, budget, { now = todayYmd(), flows = allFlows(
   liveRecords(data).forEach((r) => {
     if (r.categoryId !== budget.categoryId) return;
     if (r.type === 'iowe' && kindOf(r) === 'bill' && isOpen(r) && inRange(r.dueDate || r.date, from, to)) { planned += homeOf(r); plannedCount += 1; }
-    if (r.type === 'expense' && isPending(r) && inRange(r.date, from, to)) { planned += homeOf(r); plannedCount += 1; }
+    if (r.type === 'expense' && (isPending(r) || isScheduled(r)) && inRange(r.date, from, to)) { planned += homeOf(r); plannedCount += 1; }
   });
   live(data.repeats).forEach((rep) => {
     const t = rep.template || {};
@@ -353,4 +369,29 @@ export function splitNameAmount(text) {
   m = /^\$?(\d{2,}(?:[.,]\d{1,2})?|\d+[.,]\d{1,2})\s+(.*\S)$/.exec(s);
   if (m && word.test(m[2])) return { name: m[2].trim(), amount: m[1].replace(',', '.') };
   return null;
+}
+
+// Money that moved but isn't cash in or cash out: lent, borrowed, paid back.
+// Negative means more went out than came in.
+export function otherMoves(from, to, flows) {
+  let sum = 0;
+  flows.forEach((f) => {
+    if (f.count || !f.record || f.record.type === 'transfer') return;
+    if (!inRange(f.date, from, to)) return;
+    sum += f.home;
+  });
+  return round2(sum);
+}
+
+// Scheduled records whose day has come: they become paid or received, or
+// Pending when their repeat asks to confirm. Returns changed records or null.
+export function wakeScheduled(data, now = todayYmd()) {
+  const out = {};
+  liveRecords(data).forEach((r) => {
+    if (r.status !== 'scheduled' || r.date > now) return;
+    const rep = r.repeatId ? (data.repeats || {})[r.repeatId] : null;
+    const status = rep && !rep.deleted && rep.confirm ? 'pending' : r.type === 'income' ? 'received' : 'paid';
+    out[r.id] = { ...r, status, updatedAt: Date.now() };
+  });
+  return Object.keys(out).length ? out : null;
 }

@@ -7,7 +7,7 @@ import { useApp } from '../state/store';
 import { useNav } from '../nav';
 import { Amount, Balance, Bar, Card, Icon, Row, Seg, T, useTheme } from '../ui/kit';
 import { Fab, RecordRow } from '../ui/parts';
-import { budgetStatus, comingUp, incomeExpense, live, liveRecords, netWorth, recentRecords, accountBalance } from '../lib/ledger';
+import { budgetStatus, comingUp, displayName, incomeExpense, live, liveRecords, netWorth, otherMoves, recentRecords, accountBalance } from '../lib/ledger';
 import { MONTHS, fmtShort, parseYmd, periodOf, today } from '../lib/dates';
 import { fmtApprox } from '../lib/money';
 
@@ -17,23 +17,13 @@ export function initials(name) {
   return (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
 }
 
-export function useSwipeAction() {
-  const app = useApp();
-  const nav = useNav();
-  return (dir, r) => {
-    const act = (app.data.swipe || {})[dir];
-    if (act === 'delete') app.deleteRecord(r.id);
-    else if (act === 'edit') nav.push('add', { id: r.id });
-    else if (act === 'duplicate') app.duplicateRecord(r.id);
-  };
-}
-
 export function comingRow(item, data) {
   const r = item.record || (item.repeat && item.repeat.template) || {};
-  const name = r.name || 'Repeat';
+  const name = displayName(r, data) || 'Repeat';
   let sub = fmtShort(item.date, { weekday: true });
   let tone = null;
   if (item.kind === 'pending') { sub += ' · Pending'; tone = 'warn'; }
+  if (item.kind === 'scheduled') sub += ' · Scheduled';
   if (item.kind === 'due') {
     const overdue = item.date < today();
     sub = `${overdue ? 'Overdue since' : 'Due'} ${fmtShort(item.date, { weekday: true })}`;
@@ -43,7 +33,7 @@ export function comingRow(item, data) {
   if (item.kind === 'repeat') sub += ' · repeats';
   const a = Number(r.amount) || 0;
   const value = r.type === 'income' || item.kind === 'owedToMe' ? a : -a;
-  const kind = r.type === 'income' ? 'in' : item.kind === 'owedToMe' ? 'neutral' : 'out';
+  const kind = r.type === 'income' ? 'in' : item.kind === 'owedToMe' || r.type === 'transfer' ? 'neutral' : 'out';
   return { name, sub, tone, value, kind, currency: r.currency };
 }
 
@@ -53,7 +43,6 @@ export default function Home() {
   const th = useTheme();
   const insets = useSafeAreaInsets();
   const { data, flows, money, second, homePerUnit } = app;
-  const swipe = useSwipeAction();
   const now = today();
 
   const total = useMemo(() => live(data.accounts).reduce((s, a) => s + accountBalance(data, a, { flows, homePerUnit }).home, 0), [data.accounts, flows, homePerUnit]);
@@ -62,7 +51,9 @@ export default function Home() {
   const first = useMemo(() => liveRecords(data).reduce((m, r) => (r.date < m ? r.date : m), now), [data.records]);
   const range = period === 'total' ? { from: null, to: now } : { from: periodOf(now, period, { weekStart: data.weekStart === 0 ? 0 : data.weekStart || 1, monthStart: data.monthStartDay || 1 }).from, to: now };
   const ie = useMemo(() => incomeExpense(data, range.from || '0000-01-01', now, flows), [flows, range.from, now]);
-  const rangeLabel = period === 'total' ? `Since ${MONTHS[parseYmd(first).getMonth()]} ${first.slice(0, 4)}` : period === 'week' ? `${fmtShort(range.from)} to today` : `${fmtShort(range.from)} to today`;
+  const rangeLabel = period === 'total' ? `Since ${MONTHS[parseYmd(first).getMonth()]} ${first.slice(0, 4)}` : `${fmtShort(range.from)} to today`;
+  // Lent, borrowed or paid back in this period: it moved the balance but isn't cash in or out.
+  const other = useMemo(() => otherMoves(range.from, now, flows), [flows, range.from, now]);
   const openCounts = (counts) => nav.setTab('Records', { counts, from: range.from, to: now });
   const coming = useMemo(() => comingUp(data, { days: 14 }).slice(0, 4), [data.records, data.repeats]);
   const recent = useMemo(() => recentRecords(data, 4), [data.records]);
@@ -96,6 +87,13 @@ export default function Home() {
             {tile('income', 'Cash in', ie.income, 'in')}
             {tile('expense', 'Cash out', -ie.expense, 'out')}
           </View>
+          {other ? (
+            <Pressable onPress={() => nav.setTab('Owed')} accessibilityRole="button" hitSlop={6}>
+              <T size={12} color={th.faint} style={{ marginHorizontal: 4 }}>
+                {other < 0 ? `Plus ${money(-other)} lent or paid back, not counted as cash out` : `Plus ${money(other)} borrowed or returned to you, not counted as cash in`}
+              </T>
+            </Pressable>
+          ) : null}
         </View>
       );
     }
@@ -123,7 +121,7 @@ export default function Home() {
             <T size={12} color={th.muted} style={{ letterSpacing: 1 }}>Recent</T>
             <Pressable onPress={() => nav.setTab('Records')} hitSlop={10} accessibilityRole="button"><T size={14} weight="medium" color={th.accent}>See all</T></Pressable>
           </View>
-          {recent.length ? recent.map((r, i) => <RecordRow key={r.id} record={r} first={i === 0} showDate onPress={() => nav.push('record', { id: r.id })} onSwipe={swipe} />)
+          {recent.length ? recent.map((r, i) => <RecordRow key={r.id} record={r} first={i === 0} showDate onPress={() => nav.push('record', { id: r.id })} />)
             : <T size={14} color={th.faint} style={{ paddingVertical: 12 }}>No records yet. Tap + to add your first one.</T>}
         </Card>
       );
@@ -190,7 +188,7 @@ export default function Home() {
           {who ? <T size={14} weight="semi" color={th.accent}>{who}</T> : <Icon name="user" size={18} color={th.accent} />}
         </Pressable>
       </View>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 100, gap: 12 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 96, gap: 12 }}>
         <Pressable onPress={() => nav.push('accounts')} accessibilityRole="button" accessibilityLabel={`Balance ${money(total)}`}
           style={({ pressed }) => ({ backgroundColor: th.arch, borderTopLeftRadius: 160, borderTopRightRadius: 160, borderBottomLeftRadius: 22, borderBottomRightRadius: 22, paddingTop: 34, paddingBottom: 20, paddingHorizontal: 16, alignItems: 'center', opacity: pressed ? 0.9 : 1 })}>
           <T size={12} color={th.archSub} style={{ letterSpacing: 1 }}>Balance</T>

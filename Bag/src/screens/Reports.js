@@ -1,5 +1,6 @@
-// Reports: weekly, monthly or cumulative. Two lines, green for income and
-// red for spending. Tap a point for its numbers and where the money went.
+// Reports: by week, by month, or the running total. Two lines, green for
+// cash in and red for cash out. Tap a point for its numbers; tap Cash in or
+// Cash out to see where it came from or went.
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -73,11 +74,11 @@ export default function Reports() {
     <View style={{ flex: 1, backgroundColor: th.bg, paddingTop: insets.top }}>
       <TabTitle title="Reports" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40, gap: 12 }}>
-        <Seg items={[{ id: 'weekly', label: 'Weekly' }, { id: 'monthly', label: 'Monthly' }, { id: 'cumulative', label: 'Cumulative' }]} value={view} onChange={setView} />
+        <Seg items={[{ id: 'weekly', label: 'Week' }, { id: 'monthly', label: 'Month' }, { id: 'cumulative', label: 'Total' }]} value={view} onChange={setView} />
         <Card>
           <View style={{ flexDirection: 'row', gap: 16, marginBottom: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 14, height: 3, borderRadius: 2, backgroundColor: th.in }} /><T size={13} color={th.muted}>Income</T></View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 14, height: 3, borderRadius: 2, backgroundColor: th.out }} /><T size={13} color={th.muted}>Spending</T></View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 14, height: 3, borderRadius: 2, backgroundColor: th.in }} /><T size={13} color={th.muted}>Cash in</T></View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 14, height: 3, borderRadius: 2, backgroundColor: th.out }} /><T size={13} color={th.muted}>Cash out</T></View>
           </View>
           <TwoLineChart series={series} selected={idx} onSelect={(i) => setSel(i === null ? null : i)} />
           {series.some((s) => s.partial) ? <T size={12} color={th.faint2} style={{ marginTop: 4 }}>Hollow dots: this {view === 'weekly' ? 'week' : 'month'} so far</T> : null}
@@ -86,8 +87,8 @@ export default function Reports() {
         <Card>
           <T size={13} color={th.muted}>{point.title}{point.partial ? ' (so far)' : ''}</T>
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 6 }}>
-            <Pressable style={{ flex: 1 }} onPress={() => nav.setTab('Records', { counts: 'income', from: pFrom, to: pTo })} accessibilityRole="button"><T size={12} color={th.faint} style={{ letterSpacing: 0.8 }}>Cash in</T><Amount value={point.income} kind="in" size={18} serif /></Pressable>
-            <Pressable style={{ flex: 1 }} onPress={() => nav.setTab('Records', { counts: 'expense', from: pFrom, to: pTo })} accessibilityRole="button"><T size={12} color={th.faint} style={{ letterSpacing: 0.8 }}>Cash out</T><Amount value={-point.expense} kind="out" size={18} serif /></Pressable>
+            <Pressable style={{ flex: 1 }} onPress={() => setShowIncome(true)} accessibilityRole="button" accessibilityLabel="Cash in: show where it came from"><T size={12} color={showIncome ? th.ink : th.faint} style={{ letterSpacing: 0.8 }}>Cash in</T><Amount value={point.income} kind="in" size={18} serif /></Pressable>
+            <Pressable style={{ flex: 1 }} onPress={() => setShowIncome(false)} accessibilityRole="button" accessibilityLabel="Cash out: show where it went"><T size={12} color={!showIncome ? th.ink : th.faint} style={{ letterSpacing: 0.8 }}>Cash out</T><Amount value={-point.expense} kind="out" size={18} serif /></Pressable>
             <Pressable style={{ flex: 1 }} onPress={() => nav.setTab('Records', { from: pFrom, to: pTo })} accessibilityRole="button"><T size={12} color={th.faint} style={{ letterSpacing: 0.8 }}>{net >= 0 ? 'Saved' : 'Overspent'}</T><Amount value={net} kind={net < 0 ? 'out' : 'neutral'} size={18} serif plus={false} /></Pressable>
           </View>
           {secNet ? <T size={12} color={th.faint} style={{ marginTop: 6 }}>Saved ≈ {fmtApprox(secNet.amount, secNet.currency)}</T> : null}
@@ -95,15 +96,15 @@ export default function Reports() {
             <T size={13} color={th.faint} style={{ marginTop: 8 }}>That month alone: {app.money(point.monthIncome, { plus: true })} in, {app.money(-point.monthExpense)} out</T>
           ) : null}
           {view !== 'cumulative' && totals.n > 1 ? (
-            <T size={13} color={th.faint} style={{ marginTop: 8 }}>Average spending: {app.money(totals.avgExp)} a {view === 'weekly' ? 'week' : 'month'} over {totals.n} full {view === 'weekly' ? 'weeks' : 'months'}</T>
+            <T size={13} color={th.faint} style={{ marginTop: 8 }}>Average cash out: {app.money(totals.avgExp)} a {view === 'weekly' ? 'week' : 'month'} over {totals.n} full {view === 'weekly' ? 'weeks' : 'months'}</T>
           ) : null}
         </Card>
 
         <Card pad={0} style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <T size={16} weight="semi">{showIncome ? 'Where it came from' : 'Where it went'}</T>
-            <Pressable onPress={() => setShowIncome(!showIncome)} accessibilityRole="button" hitSlop={8}>
-              <T size={14} weight="medium" color={th.accent}>{showIncome ? 'Show spending' : 'Show income'}</T>
+<Pressable onPress={() => nav.setTab('Records', { counts: showIncome ? 'income' : 'expense', from: pFrom, to: pTo })} accessibilityRole="button" hitSlop={8}>
+              <T size={14} weight="medium" color={th.accent}>See records</T>
             </Pressable>
           </View>
           {cats.length ? cats.map((c, i) => {
@@ -120,7 +121,7 @@ export default function Reports() {
                 <Bar height={6} parts={[{ pct: (c.total / catMax) * 100, color: showIncome ? th.in : th.catBar }]} />
               </Pressable>
             );
-          }) : <T size={14} color={th.faint} style={{ paddingVertical: 12 }}>{showIncome ? 'No income' : 'No spending'} {view === 'cumulative' ? 'yet' : 'in this period'}</T>}
+          }) : <T size={14} color={th.faint} style={{ paddingVertical: 12 }}>{showIncome ? 'No cash in' : 'No cash out'} {view === 'cumulative' ? 'yet' : 'in this period'}</T>}
         </Card>
 
         {view === 'cumulative' && balances.length ? (

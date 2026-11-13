@@ -12,11 +12,11 @@ const SERIF = 'Fraunces_400Regular';
 const COLORS = {
   light: {
     bg: '#F1F3F6', card: '#FFFFFF', tint: '#E1E6ED', ink: '#1A2230', muted: '#5D6B7D', line: '#E2E7EE',
-    arch: '#3B4B5E', archInk: '#F1F3F6', archSub: '#D6E3F0', acc: '#3B4B5E', onAcc: '#F1F3F6', in: '#2E8A5E', out: '#C0392B',
+    arch: '#3B4B5E', archInk: '#F1F3F6', archSub: '#D6E3F0', archNeg: '#FFB4AB', acc: '#3B4B5E', onAcc: '#F1F3F6', in: '#2E8A5E', out: '#C0392B',
   },
   dark: {
     bg: '#121821', card: '#1A222D', tint: '#1E2733', ink: '#E8EDF3', muted: '#9AA8B8', line: '#232C38',
-    arch: '#D6E3F0', archInk: '#121821', archSub: '#3B4B5E', acc: '#D6E3F0', onAcc: '#121821', in: '#4BBF8A', out: '#F2766F',
+    arch: '#D6E3F0', archInk: '#121821', archSub: '#3B4B5E', archNeg: '#B42318', acc: '#D6E3F0', onAcc: '#121821', in: '#4BBF8A', out: '#F2766F',
   },
 };
 
@@ -72,7 +72,7 @@ function Body({ m, c, size }) {
 
       <FlexWidget {...link('bag://home')} style={{ width: 'match_parent', backgroundColor: c.arch, borderTopLeftRadius: 90, borderTopRightRadius: 90, borderBottomLeftRadius: 16, borderBottomRightRadius: 16, paddingTop: 16, paddingBottom: 12, paddingHorizontal: 12, alignItems: 'center' }}>
         <TextWidget text="Balance" style={{ fontSize: 11, color: c.archSub, letterSpacing: 0.08 }} />
-        <TextWidget text={m.balanceText} style={{ fontSize: 30, color: m.balance < 0 ? c.out : c.archInk, fontFamily: SERIF }} maxLines={1} adjustsFontSizeToFit />
+        <TextWidget text={m.balanceText} style={{ fontSize: 30, color: m.balance < 0 ? c.archNeg : c.archInk, fontFamily: SERIF }} maxLines={1} adjustsFontSizeToFit />
         {m.second ? <TextWidget text={m.second} style={{ fontSize: 11, color: c.archSub }} /> : null}
         <TextWidget text={m.verdict} style={{ fontSize: 12, color: c.archInk, marginTop: 4 }} maxLines={1} />
       </FlexWidget>
@@ -81,7 +81,7 @@ function Body({ m, c, size }) {
         <FlexWidget style={{ width: 'match_parent', flexDirection: 'row', backgroundColor: c.tint, borderRadius: 14, padding: 3, flexGap: 3 }}>
           <Pill c={c} label="Week" view="week" on={m.view === 'week'} />
           <Pill c={c} label="Month" view="month" on={m.view === 'month'} />
-          <Pill c={c} label="All time" view="total" on={m.view === 'total'} />
+          <Pill c={c} label="Total" view="total" on={m.view === 'total'} />
         </FlexWidget>
       ) : null}
 

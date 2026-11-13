@@ -7,9 +7,9 @@ import { DEFAULT_CATEGORIES, HOME_CARDS } from '../data/defaults';
 import { currencyDecimals } from '../data/currencies';
 import { resolveTheme } from '../theme/palettes';
 import { newId, repeatRecordId } from '../lib/ids';
-import { today as todayYmd } from '../lib/dates';
+import { addDays, daysBetween, today as todayYmd } from '../lib/dates';
 import { fmt, fmtMoney, round2 } from '../lib/money';
-import { allFlows, defaultKind } from '../lib/ledger';
+import { allFlows, defaultKind, wakeScheduled } from '../lib/ledger';
 import { materialise } from '../lib/repeats';
 import { ensureRates, latestRate, loadRates, savedRate } from '../lib/rates';
 import { mergeSync, purgeTombstones, stampChanges, syncPayload, COLLECTIONS, WHOLE_FIELDS } from '../lib/sync';
@@ -46,6 +46,7 @@ export const DEFAULTS = {
   secondOn: false,
   secondShow: { home: true, tiles: false, accounts: true, record: false, reports: false, widget: true },
   homePeriod: 'month', // week | month | total
+  addMore: false, // Add screen: were the extra options open last time
   photos: {}, // record id -> [file uri], kept on this phone only
   reminders: { on: true, billDays: 2, time: '09:00', repeats: true, owed: true },
   homeCards: HOME_CARDS,
@@ -147,8 +148,10 @@ export function AppProvider({ children }) {
   const runRepeats = useCallback(() => {
     setData((d) => {
       if (!d) return d;
-      const m = materialise(d);
-      return m ? { ...d, records: { ...d.records, ...m.records }, repeats: { ...d.repeats, ...m.repeats } } : d;
+      const w = wakeScheduled(d);
+      const d2 = w ? { ...d, records: { ...d.records, ...w } } : d;
+      const m = materialise(d2);
+      return m ? { ...d2, records: { ...d2.records, ...m.records }, repeats: { ...d2.repeats, ...m.repeats } } : d2;
     });
   }, []);
 
@@ -203,6 +206,11 @@ export function AppProvider({ children }) {
     const statusDefault = { expense: 'paid', income: 'received', transfer: 'paid', iowe: 'open', owed: 'open' }[type];
     let status = old && old.type === type ? old.status : statusDefault;
     if (old && old.status === 'pending' && (type === 'expense' || type === 'income' || type === 'transfer')) status = old.status;
+    // A date after today waits as Scheduled and counts for nothing until then.
+    if (type === 'expense' || type === 'income' || type === 'transfer') {
+      if (draft.date > todayYmd()) status = 'scheduled';
+      else if (status === 'scheduled') status = statusDefault;
+    }
     const rec = {
       ...(old || {}),
       ...draft,
@@ -210,6 +218,7 @@ export function AppProvider({ children }) {
       type,
       kind: type === 'iowe' || type === 'owed' ? draft.kind || defaultKind(type) : null,
       amount: round2(Math.abs(Number(draft.amount) || 0)),
+      name: String(draft.name || '').trim() || (type === 'transfer' ? 'Transfer' : ((d.categories[draft.categoryId] || {}).name) || ''),
       currency,
       rate,
       rateCheck: foreign && !draft.rateManual && !savedRate(draft.date, currency, d.homeCurrency),
@@ -267,12 +276,28 @@ export function AppProvider({ children }) {
     setData((cur) => ({ ...cur, records: { ...cur.records, ...Object.fromEntries(Object.entries(prevRecords).map(([k, v]) => [k, { ...v, updatedAt: now() }])) } }));
   }, []);
 
-  const deleteRecord = useCallback((id, { silent } = {}) => {
+  const deleteRecord = useCallback((id, { silent, extra } = {}) => {
     const d = dataRef.current;
     const prev = d.records[id];
     if (!prev) return;
-    setData((cur) => ({ ...cur, records: { ...cur.records, [id]: tomb(id) } }));
-    if (!silent) showToast('Record deleted', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
+    const pics = (d.photos || {})[id] || [];
+    const also = (extra || []).filter((x) => d.records[x] && !d.records[x].deleted);
+    const prevAll = { [id]: prev, ...Object.fromEntries(also.map((x) => [x, d.records[x]])) };
+    setData((cur) => {
+      const photos = { ...cur.photos };
+      delete photos[id];
+      return { ...cur, photos, records: { ...cur.records, [id]: tomb(id), ...Object.fromEntries(also.map((x) => [x, tomb(x)])) } };
+    });
+    // The photo files are removed once Undo is no longer on offer.
+    let undone = false;
+    if (pics.length) setTimeout(() => { if (!undone) pics.forEach(dropPhoto); }, 8000);
+    if (!silent) {
+      showToast(also.length ? 'Both deleted' : 'Record deleted', { label: 'Undo', onPress: () => {
+        undone = true;
+        restore(prevAll);
+        if (pics.length) setData((cur) => ({ ...cur, photos: { ...cur.photos, [id]: pics } }));
+      } });
+    }
   }, [showToast, restore]);
 
   const settleRecord = useCallback((id, { date, accountId } = {}) => {
@@ -317,8 +342,8 @@ export function AppProvider({ children }) {
     const nid = newId('r');
     const t = now();
     const status = { expense: 'paid', income: 'received', transfer: 'paid', iowe: 'open', owed: 'open' }[r.type];
-    setData((cur) => ({ ...cur, records: { ...cur.records, [nid]: { ...r, id: nid, date: todayYmd(), status, repeatId: null, settledDate: null, settledAccountId: null, splitOf: null, imported: false, createdAt: t, updatedAt: t } } }));
-    showToast('Copied to today');
+    setData((cur) => ({ ...cur, records: { ...cur.records, [nid]: { ...r, id: nid, date: todayYmd(), dueDate: r.dueDate ? addDays(todayYmd(), Math.max(0, daysBetween(r.date, r.dueDate))) : r.dueDate, status, repeatId: null, settledDate: null, settledAccountId: null, splitOf: null, imported: false, createdAt: t, updatedAt: t } } }));
+    showToast('Duplicated to today');
     return nid;
   }, [showToast]);
 
@@ -431,6 +456,16 @@ export function AppProvider({ children }) {
   /* ------------------------------ Import and restore ------------------------------ */
   const applyImport = useCallback((plan) => {
     const strip = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => { const { isNew, ...rest } = v; return [k, rest]; }));
+    const before = dataRef.current;
+    const undo = () => setData((cur) => {
+      const t = now();
+      const back = (coll, added) => {
+        const next = { ...cur[coll] };
+        Object.keys(added).forEach((k) => { next[k] = before[coll][k] ? { ...before[coll][k], updatedAt: t } : tomb(k); });
+        return next;
+      };
+      return { ...cur, records: back('records', plan.records), accounts: back('accounts', plan.accounts), categories: back('categories', plan.categories) };
+    });
     setData((cur) => ({
       ...cur,
       accounts: { ...cur.accounts, ...strip(plan.accounts) },
@@ -440,7 +475,7 @@ export function AppProvider({ children }) {
     }));
     const foreign = Object.values(plan.records).filter((r) => r.rateCheck).map((r) => r.id);
     if (foreign.length) setTimeout(() => fillRate(foreign), 100);
-    showToast(`Imported ${Object.keys(plan.records).length} records`);
+    showToast(`Imported ${Object.keys(plan.records).length} records`, { label: 'Undo', onPress: undo });
   }, [fillRate, showToast]);
 
   // Replace everything that syncs with a backup (settings on this phone stay).
