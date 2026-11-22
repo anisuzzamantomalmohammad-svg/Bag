@@ -2,10 +2,9 @@
 //
 // A repeat holds a template record and a rule. Each date the rule hits
 // becomes a real record with the id rep_<repeat>_<date>, so a second phone
-// making the same one ends up with the same record, never a copy. With
-// "ask me to confirm" on, money in and out waits as Pending until you
-// confirm it; bills you owe are made 14 days early as Open, so their
-// reminder can go off.
+// making the same one ends up with the same record, never a copy. Each one
+// waits as Upcoming until you mark it paid (or received), so nothing counts
+// by itself. People repeats (lent, borrowed) are made 14 days early as Open.
 import { addDays, addMonths, daysBetween, daysInMonth, dow, fmtDate, ordinal, parseYmd, today as todayYmd, weekStartOf, ymd, DAY_NAMES } from './dates';
 
 export const FREQS = ['day', 'week', 'month', 'year'];
@@ -123,7 +122,7 @@ export function describe(rep) {
 export function lastAmount(data, rep) {
   let best = null;
   Object.values(data.records || {}).forEach((r) => {
-    if (!r || r.deleted || r.repeatId !== rep.id || r.status === 'pending' || r.status === 'skipped') return;
+    if (!r || r.deleted || r.repeatId !== rep.id || r.status === 'pending' || r.status === 'scheduled' || r.status === 'skipped') return;
     if (!best || r.date > best.date) best = r;
   });
   return best ? best.amount : (rep.template || {}).amount;
@@ -153,8 +152,7 @@ export function materialise(data, now = todayYmd()) {
       if (debt) {
         rec.status = 'open';
         rec.dueDate = d;
-      } else if (rep.confirm) rec.status = 'pending';
-      else rec.status = t.type === 'income' ? 'received' : 'paid';
+      } else rec.status = 'pending';
       records[id] = rec;
     });
     repeats[rep.id] = { ...rep, lastMade: horizon };

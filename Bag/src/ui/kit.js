@@ -2,11 +2,15 @@
 // inputs, sheets and the toast. Everything reads the theme, so light, dark
 // and the accent colour come for free.
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, BackHandler, Easing, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Animated, BackHandler, Easing, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
+import Svg, { Circle } from 'react-native-svg';
+import { alpha } from '../lib/look';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 export const F = { regular: 'Inter_400Regular', medium: 'Inter_500Medium', semi: 'Inter_600SemiBold', bold: 'Inter_700Bold', serif: 'Fraunces_400Regular', serifSemi: 'Fraunces_600SemiBold' };
 const native = Platform.OS !== 'web';
@@ -41,7 +45,7 @@ export function Icon({ name, size = 20, color, style }) {
 
 export function Card({ style, children, pad = 16, onPress, ...rest }) {
   const th = useTheme();
-  const s = [{ backgroundColor: th.card, borderRadius: 20, padding: pad, overflow: 'hidden' }, style];
+  const s = [{ backgroundColor: th.card, borderRadius: 22, padding: pad, overflow: 'hidden' }, style];
   if (onPress) {
     return (
       <Pressable onPress={onPress} style={({ pressed }) => [s, pressed && { opacity: 0.85 }]} {...rest}>
@@ -97,26 +101,104 @@ export function Chips({ children, style }) {
   return <View style={[{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, style]}>{children}</View>;
 }
 
-// Segmented control: [{ id, label }]
+// Segmented control: [{ id, label }]. The selected one has a little card
+// that slides across when you change it.
 export function Seg({ items, value, onChange, style, small }) {
   const th = useTheme();
+  const [lay, setLay] = useState({});
+  const x = useRef(new Animated.Value(0)).current;
+  const w = useRef(new Animated.Value(0)).current;
+  const on = lay[value];
+  useEffect(() => {
+    if (!on) return;
+    Animated.parallel([
+      Animated.spring(x, { toValue: on.x, useNativeDriver: false, damping: 18, stiffness: 220 }),
+      Animated.spring(w, { toValue: on.w, useNativeDriver: false, damping: 18, stiffness: 220 }),
+    ]).start();
+  }, [value, on && on.x, on && on.w]);
   return (
-    <View accessibilityRole="tablist" style={[{ flexDirection: 'row', gap: 4, padding: 4, borderRadius: 14, backgroundColor: th.track }, style]}>
+    <View accessibilityRole="tablist" style={[{ flexDirection: 'row', padding: 4, borderRadius: 16, backgroundColor: th.card }, style]}>
+      {on ? <Animated.View style={{ position: 'absolute', top: 4, bottom: 4, left: x, width: w, borderRadius: 12, backgroundColor: th.soft, borderWidth: 1, borderColor: th.lineStrong }} /> : null}
       {items.map((it) => {
-        const on = it.id === value;
+        const sel = it.id === value;
         return (
           <Pressable
             key={it.id}
+            onLayout={(e) => { const { x: lx, width } = e.nativeEvent.layout; setLay((l) => (l[it.id] && l[it.id].x === lx && l[it.id].w === width ? l : { ...l, [it.id]: { x: lx, w: width } })); }}
             onPress={() => onChange(it.id)}
             accessibilityRole="tab"
-            accessibilityState={{ selected: on }}
-            style={{ flex: 1, minHeight: small ? 38 : 44, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? th.segOn : 'transparent', paddingHorizontal: 6 }}
+            accessibilityState={{ selected: sel }}
+            style={{ flex: 1, minHeight: small ? 36 : 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 }}
           >
-            <T size={14} weight={on ? 'semi' : 'medium'} color={on ? th.ink : th.muted} numberOfLines={1}>{it.label}</T>
+            <T size={13.5} weight="medium" color={sel ? th.ink : th.faint} numberOfLines={1}>{it.label}</T>
           </Pressable>
         );
       })}
     </View>
+  );
+}
+
+// A soft coloured square with an emoji: the look of every category.
+export function Bubble({ emoji, color, size = 42, style }) {
+  const c = color || '#9AA7B6';
+  return (
+    <View style={[{ width: size, height: size, borderRadius: size * 0.36, backgroundColor: alpha(c, 0.17), alignItems: 'center', justifyContent: 'center' }, style]}>
+      <Text style={{ fontSize: size * 0.45 }}>{emoji || '🏷️'}</Text>
+    </View>
+  );
+}
+
+// A ring that fills to pct (0..1) when it appears.
+export function Ring({ pct = 0, color, size = 44, stroke = 4, children, style }) {
+  const th = useTheme();
+  const r = size / 2 - stroke;
+  const c = 2 * Math.PI * r;
+  const a = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(a, { toValue: Math.max(0, Math.min(1, pct)), duration: 1000, delay: 120, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  }, [pct]);
+  return (
+    <View style={[{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }, style]}>
+      <Svg width={size} height={size} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
+        <Circle cx={size / 2} cy={size / 2} r={r} stroke={th.soft} strokeWidth={stroke} fill="none" />
+        <AnimatedCircle cx={size / 2} cy={size / 2} r={r} stroke={color || th.chipOn} strokeWidth={stroke} fill="none" strokeLinecap="round"
+          strokeDasharray={`${c} ${c}`} strokeDashoffset={a.interpolate({ inputRange: [0, 1], outputRange: [c, 0] })} />
+      </Svg>
+      {children}
+    </View>
+  );
+}
+
+// Days left, in a ring that empties as the day gets close.
+export function DaysRing({ days, color }) {
+  const th = useTheme();
+  const label = days <= 0 ? (days === 0 ? 'Today' : 'Late') : String(days);
+  return (
+    <Ring pct={days <= 0 ? 1 : Math.min(1, days / 30)} color={days < 0 ? th.warn : color}>
+      <T size={days > 0 ? 12 : 9} weight="semi" style={{ lineHeight: 13 }}>{label}</T>
+      {days > 0 ? <T size={8.5} color={th.faint} style={{ lineHeight: 10 }}>{days === 1 ? 'day' : 'days'}</T> : null}
+    </Ring>
+  );
+}
+
+const OUTER_KEYS = new Set(['flex', 'flexGrow', 'flexShrink', 'flexBasis', 'width', 'minWidth', 'maxWidth', 'alignSelf', 'margin', 'marginTop', 'marginBottom', 'marginLeft', 'marginRight', 'marginHorizontal', 'marginVertical', 'position', 'top', 'left', 'right', 'bottom', 'zIndex']);
+
+// Shrinks a little under your finger, then springs back.
+export function Squish({ onPress, onLongPress, style, children, accessibilityLabel, accessibilityRole = 'button', delayLongPress }) {
+  const s = useRef(new Animated.Value(1)).current;
+  // Sizing that belongs to the outside (flex, width, margins) goes on the
+  // Pressable, so a Squish fills its row like a View would.
+  const flat = StyleSheet.flatten(style) || {};
+  const outer = {};
+  const inner = {};
+  Object.keys(flat).forEach((k) => { (OUTER_KEYS.has(k) ? outer : inner)[k] = flat[k]; });
+  if (outer.width !== undefined || outer.flex !== undefined || outer.flexGrow !== undefined) inner.flexGrow = 1;
+  return (
+    <Pressable style={outer} onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} accessibilityRole={accessibilityRole} accessibilityLabel={accessibilityLabel}
+      onPressIn={() => Animated.spring(s, { toValue: 0.96, useNativeDriver: native, speed: 40 }).start()}
+      onPressOut={() => Animated.spring(s, { toValue: 1, useNativeDriver: native, friction: 4 }).start()}>
+      <Animated.View style={[inner, { transform: [{ scale: s }] }]}>{children}</Animated.View>
+    </Pressable>
   );
 }
 
@@ -138,11 +220,13 @@ export function Toggle({ value, onChange, label }) {
 export function Button({ label, onPress, kind = 'primary', icon, style, disabled, small, accessibilityLabel }) {
   const th = useTheme();
   const look = {
-    primary: { bg: th.accentFill, fg: th.onAccent, border: th.accentFill },
+    primary: { bg: th.chipOn, fg: th.chipOnInk, border: th.chipOn },
     secondary: { bg: th.card, fg: th.ink, border: th.lineStrong },
     danger: { bg: th.mode === 'dark' ? '#7F1D1D' : '#B91C1C', fg: '#FFFFFF', border: th.mode === 'dark' ? '#7F1D1D' : '#B91C1C' },
     dangerText: { bg: th.card, fg: th.danger, border: th.lineStrong },
     ghost: { bg: 'transparent', fg: th.accent, border: 'transparent' },
+    amber: { bg: th.warnBtn, fg: th.warnBtnInk, border: th.warnBtn },
+    soft: { bg: th.mode === 'dark' ? 'rgba(255,255,255,0.07)' : 'rgba(14,19,26,0.06)', fg: th.ink, border: 'transparent' },
   }[kind];
   return (
     <Pressable
@@ -204,7 +288,7 @@ export function Balance({ value, size = 34, style, color }) {
 export function IconBox({ emoji, size = 36, style }) {
   const th = useTheme();
   return (
-    <View style={[{ width: size, height: size, borderRadius: size * 0.32, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center' }, style]}>
+    <View style={[{ width: size, height: size, borderRadius: size * 0.36, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center' }, style]}>
       <Text style={{ fontSize: size * 0.5 }}>{emoji || '🏷️'}</Text>
     </View>
   );

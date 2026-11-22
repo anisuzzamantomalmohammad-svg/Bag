@@ -1,14 +1,14 @@
-// Plan: budgets, savings goals and repeats, one segment each.
-import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+// Plan: budgets and savings goals. Repeats live in Upcoming.
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Amount, Bar, Button, Card, Empty, IconBox, Row, Seg, T, useTheme } from '../ui/kit';
+import { Bar, Button, Card, Empty, Ring, Seg, Squish, T, useTheme } from '../ui/kit';
+import { catColor } from '../lib/look';
 import { TabTitle } from '../ui/parts';
 import { accountBalance, budgetStatus, live } from '../lib/ledger';
-import { describe, nextDate } from '../lib/repeats';
-import { daysBetween, fmtDate, fmtShort, today } from '../lib/dates';
+import { daysBetween, fmtDate, today } from '../lib/dates';
 import { round2 } from '../lib/money';
 
 export function BudgetRow({ b, first }) {
@@ -20,23 +20,22 @@ export function BudgetRow({ b, first }) {
   const used = Math.min(100, st.pct * 100);
   const col = st.state === 'over' ? th.out : st.state === 'warn' ? th.warnBar : th.accent;
   const plannedPct = st.limit ? Math.min(100 - used, (st.planned / st.limit) * 100) : 0;
-  const note = st.state === 'over' ? `${app.money(-st.left)} over` : `${app.money(st.left)} left${st.planned ? ` · ${app.money(st.planned)} planned` : ''}`;
+  const note = st.state === 'over' ? `${app.money(-st.left)} over` : `${app.money(st.left)} left${st.planned ? ` · ${app.money(st.planned)} upcoming` : ''}`;
   return (
-    <Pressable onPress={() => nav.push('category', { id: b.categoryId })} accessibilityRole="button" accessibilityLabel={`${cat.name} budget, ${note}`} style={({ pressed }) => [{ paddingVertical: 12, gap: 8, borderTopWidth: first ? 0 : 1, borderTopColor: th.line }, pressed && { opacity: 0.7 }]}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <IconBox emoji={cat.emoji} />
-        <View style={{ flex: 1 }}>
-          <T>{cat.name}</T>
-          <T size={13} color={st.state === 'over' ? th.out : st.state === 'warn' ? th.warn : th.faint}>{note}</T>
-        </View>
-        <T size={14} color={th.muted}>{app.money(st.spent)} of {app.money(st.limit)}</T>
+    <Squish onPress={() => nav.push('category', { id: b.categoryId })} accessibilityLabel={`${cat.name} budget, ${note}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: 22, backgroundColor: th.card, marginTop: first ? 0 : 10, borderWidth: st.state === 'over' ? 1 : 0, borderColor: th.dangerSoft }}>
+      <Ring pct={st.pct} color={st.state === 'over' ? th.out : st.state === 'warn' ? th.warnBar : catColor(cat)} size={58} stroke={5}>
+        <T size={12} weight="semi">{Math.round(st.pct * 100)}%</T>
+      </Ring>
+      <View style={{ flex: 1 }}>
+        <T>{cat.emoji} {cat.name}</T>
+        <T size={13} color={st.state === 'over' ? th.out : st.state === 'warn' ? th.warn : th.faint}>{app.money(st.spent)} of {app.money(st.limit)} · {note}</T>
+        {plannedPct ? <Bar height={4} style={{ marginTop: 6 }} parts={[{ pct: used, color: col }, { pct: plannedPct, color: th.planned }]} /> : null}
       </View>
-      <Bar parts={[{ pct: used, color: col }, { pct: plannedPct, color: th.planned }]} />
-    </Pressable>
+    </Squish>
   );
 }
 
-function Budgets() {
+export function Budgets() {
   const app = useApp();
   const nav = useNav();
   const th = useTheme();
@@ -55,7 +54,7 @@ function Budgets() {
     onPick: (id) => nav.push('budget', { categoryId: id }),
   });
   if (!budgets.length) {
-    return <Empty title="No budgets yet" text="Set a limit for a category, like groceries, and Bag shows how much is left. Planned bills show as a lighter bar." action="Set a budget" onAction={addBudget} />;
+    return <Empty title="No budgets yet" text="Set a limit for a category, like groceries, and Bag shows how much is left. Upcoming bills show as a lighter bar." action="Set a budget" onAction={addBudget} />;
   }
   return (
     <>
@@ -67,9 +66,9 @@ function Budgets() {
           {data.budgetRollover ? <T size={13} color={th.faint} style={{ marginTop: 8 }}>What's left at the end of a month carries over to the next.</T> : null}
         </Card>
       ) : null}
-      <Card pad={0} style={{ paddingHorizontal: 16, paddingVertical: 2 }}>
+      <View>
         {budgets.map((b, i) => <BudgetRow key={b.categoryId} b={b} first={i === 0} />)}
-      </Card>
+      </View>
       {free.length ? <Button label="Add a budget" kind="secondary" icon="plus" onPress={addBudget} /> : null}
     </>
   );
@@ -88,7 +87,30 @@ export function goalProgress(app, g) {
   return { acc, saved: round2(saved), target, pct, left: round2(Math.max(0, target - saved)), perMonth, done: target > 0 && saved >= target };
 }
 
-function Goals() {
+// A jar that fills to pct with a slow moving wave.
+export function Jar({ pct, color }) {
+  const th = useTheme();
+  const spin = useRef(new Animated.Value(0)).current;
+  const fill = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.timing(spin, { toValue: 1, duration: 7000, easing: Easing.linear, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  useEffect(() => { Animated.timing(fill, { toValue: pct, duration: 1400, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(); }, [pct]);
+  const H = 120;
+  const W = 92;
+  const ty = fill.interpolate({ inputRange: [0, 1], outputRange: [H + 4, -W * 0.25] });
+  const rot = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  return (
+    <View style={{ width: W, height: H, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderBottomLeftRadius: 34, borderBottomRightRadius: 34, backgroundColor: th.soft, overflow: 'hidden', borderWidth: 2, borderColor: th.lineStrong }}>
+      <Animated.View style={{ position: 'absolute', left: -W * 0.5, width: W * 2, height: W * 2, borderRadius: W * 0.84, backgroundColor: color || '#7FB2F0', opacity: 0.55, transform: [{ translateY: ty }, { rotate: rot }] }} />
+      <Animated.View style={{ position: 'absolute', left: -W * 0.5, width: W * 2, height: W * 2, borderRadius: W * 0.8, backgroundColor: color || '#7FB2F0', transform: [{ translateY: Animated.add(ty, 6) }, { rotate: spin.interpolate({ inputRange: [0, 1], outputRange: ['40deg', '-320deg'] }) }] }} />
+    </View>
+  );
+}
+
+export function Goals() {
   const app = useApp();
   const nav = useNav();
   const th = useTheme();
@@ -101,50 +123,18 @@ function Goals() {
       {goals.map((g) => {
         const p = goalProgress(app, g);
         return (
-          <Card key={g.id} onPress={() => nav.push('goal', { id: g.id })} accessibilityLabel={`${g.name}, ${Math.round(p.pct * 100)} percent`}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <IconBox emoji={g.emoji || '🎯'} />
-              <View style={{ flex: 1 }}>
-                <T weight="medium">{g.name}</T>
-                <T size={13} color={th.faint}>{p.done ? 'Reached' : g.date ? `By ${fmtDate(g.date)}${p.perMonth ? ` · ${app.money(p.perMonth)} a month` : ''}` : p.acc ? p.acc.name : 'No account linked'}</T>
-              </View>
-              <T size={14} weight="medium" color={p.done ? th.in : th.muted}>{Math.round(p.pct * 100)}%</T>
+          <Card key={g.id} onPress={() => nav.push('goal', { id: g.id })} accessibilityLabel={`${g.name}, ${Math.round(p.pct * 100)} percent`} style={{ flexDirection: 'row', alignItems: 'center', gap: 18, padding: 20, marginBottom: 12 }}>
+            <Jar pct={p.pct} color={p.done ? th.in : '#7FB2F0'} />
+            <View style={{ flex: 1 }}>
+              <T size={13} color={th.faint}>{g.emoji || '🎯'} {g.name}</T>
+              <T serif size={28}>{app.money(p.saved)}</T>
+              <T size={13} color={th.muted}>of {app.money(p.target)} · {Math.round(p.pct * 100)}%</T>
+              <T size={12.5} color={p.done ? th.in : th.faint} style={{ marginTop: 6 }}>{p.done ? 'Reached' : g.date ? `By ${fmtDate(g.date)}${p.perMonth ? ` · ${app.money(p.perMonth)} a month gets you there` : ''}` : p.acc ? p.acc.name : 'No account linked'}</T>
             </View>
-            <Bar parts={[{ pct: p.pct * 100, color: p.done ? th.in : th.accent }]} style={{ marginTop: 12 }} />
-            <T size={13} color={th.muted} style={{ marginTop: 8 }}>{app.money(p.saved)} of {app.money(p.target)}</T>
           </Card>
         );
       })}
       <Button label="Start a goal" kind="secondary" icon="plus" onPress={() => nav.push('goal', {})} />
-    </>
-  );
-}
-
-function Repeats() {
-  const app = useApp();
-  const nav = useNav();
-  const th = useTheme();
-  const reps = live(app.data.repeats).map((r) => ({ r, next: r.paused ? null : nextDate(r, today()) || null }))
-    .sort((a, b) => (a.r.paused !== b.r.paused ? (a.r.paused ? 1 : -1) : (a.next || '9') < (b.next || '9') ? -1 : 1));
-  if (!reps.length) {
-    return <Empty title="Nothing repeats yet" text="Rent, salary, the phone bill: add a record and set Repeats on it. Bag makes the next one for you." action="Add a record" onAction={() => nav.push('add', {})} />;
-  }
-  return (
-    <>
-      <Card pad={0} style={{ paddingHorizontal: 16, paddingVertical: 2 }}>
-        {reps.map(({ r, next }, i) => {
-          const t = r.template || {};
-          const cat = app.data.categories[t.categoryId];
-          return (
-            <Row key={r.id} first={i === 0} minHeight={64} left={<IconBox emoji={t.type === 'transfer' ? '🔀' : cat && !cat.deleted ? cat.emoji : '🔁'} />}
-              label={t.name || 'Repeat'}
-              sub={<T size={13} color={th.faint} numberOfLines={1}>{r.paused ? 'Paused' : `${describe(r)}${next ? ` · next ${fmtShort(next)}` : ' · ended'}`}</T>}
-              value={<Amount value={t.type === 'income' || t.type === 'owed' ? t.amount : -t.amount} kind={t.type === 'income' ? 'in' : t.type === 'transfer' || t.type === 'owed' ? 'neutral' : 'out'} currency={t.currency} muted={r.paused} />}
-              onPress={() => nav.push('repeat', { id: r.id })} chevron={false} />
-          );
-        })}
-      </Card>
-      <T size={13} color={th.faint} style={{ marginHorizontal: 4 }}>To add a repeat, set Repeats when you add a record.</T>
     </>
   );
 }
@@ -157,8 +147,8 @@ export default function Plan() {
     <View style={{ flex: 1, backgroundColor: th.bg, paddingTop: insets.top }}>
       <TabTitle title="Plan" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40, gap: 12 }}>
-        <Seg items={[{ id: 'budgets', label: 'Budgets' }, { id: 'goals', label: 'Goals' }, { id: 'repeats', label: 'Repeats' }]} value={seg} onChange={setSeg} />
-        {seg === 'budgets' ? <Budgets /> : seg === 'goals' ? <Goals /> : <Repeats />}
+        <Seg items={[{ id: 'budgets', label: 'Budgets' }, { id: 'goals', label: 'Goals' }]} value={seg} onChange={setSeg} />
+        {seg === 'budgets' ? <Budgets /> : <Goals />}
       </ScrollView>
     </View>
   );

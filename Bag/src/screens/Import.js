@@ -42,7 +42,7 @@ export default function Import() {
   const before = plan ? totalBalance(app.data, { flows: app.flows, homePerUnit: app.homePerUnit }) : 0;
   const after = plan ? totalBalance(plan.after, { homePerUnit: app.homePerUnit }) : 0;
   const lines = plan ? [
-    ['Expenses', c.expense], ['Income', c.income], ['I owe', c.iowe], ['Owed to me', c.owed], ['Transfers', c.transfer], ['Opening balances', c.opening],
+    ['Cash out', c.expense], ['Cash in', c.income], ['I borrowed or owe', c.iowe], ['I lent or owed to me', c.owed], ['Moves', c.transfer], ['Opening balances', c.opening],
   ].filter(([, v]) => v) : [];
 
   return (

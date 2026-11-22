@@ -1,22 +1,24 @@
-// The home screen widget, in slate and ice. Drawn with
-// react-native-android-widget, which turns these into Android views. Every
-// part opens something: the arch opens Home, the tiles open those records,
-// a bill opens that bill, + opens a new record.
+// The home screen widget. Drawn with react-native-android-widget, which turns
+// these into Android views. Every part opens something: the balance opens
+// Home, Bank and Cash open their records, an Upcoming row opens it, Paid opens
+// the "Did you pay it?" sheet, + opens a new record.
 import React from 'react';
 import { FlexWidget, SvgWidget, TextWidget } from 'react-native-android-widget';
-import { chartSvg } from './model';
+import { sparkSvg } from './model';
 
 export const WIDGET_NAME = 'Bag';
 
 const SERIF = 'Fraunces_400Regular';
 const COLORS = {
   light: {
-    bg: '#F1F3F6', card: '#FFFFFF', tint: '#E1E6ED', ink: '#1A2230', muted: '#5D6B7D', line: '#E2E7EE',
-    arch: '#3B4B5E', archInk: '#F1F3F6', archSub: '#D6E3F0', archNeg: '#FFB4AB', acc: '#3B4B5E', onAcc: '#F1F3F6', in: '#2E8A5E', out: '#C0392B',
+    bg: '#F1F3F6', card: '#FFFFFF', ink: '#18202B', muted: '#4A5768', faint: '#6B7888', border: '#E3E8EE',
+    plus: '#2F3D4E', plusInk: '#FFFFFF', spark: '#3B6EA8', fut: '#8391A3', in: '#2E8A5E', out: '#C0392B',
+    askBg: '#FCEFD3', ask: '#8A5300', askBtn: '#E9A93A', askBtnInk: '#2A1A00',
   },
   dark: {
-    bg: '#121821', card: '#1A222D', tint: '#1E2733', ink: '#E8EDF3', muted: '#9AA8B8', line: '#232C38',
-    arch: '#D6E3F0', archInk: '#121821', archSub: '#3B4B5E', archNeg: '#B42318', acc: '#D6E3F0', onAcc: '#121821', in: '#4BBF8A', out: '#F2766F',
+    bg: '#0E131A', card: '#151C25', ink: '#EEF2F6', muted: '#9AA7B6', faint: '#6F7D8D', border: '#232C38',
+    plus: '#D6E3F0', plusInk: '#0E131A', spark: '#AFC6DE', fut: '#9AA7B6', in: '#5CC79A', out: '#F0857E',
+    askBg: '#2E2615', ask: '#F5C35B', askBtn: '#F5C35B', askBtnInk: '#2A2213',
   },
 };
 
@@ -32,79 +34,58 @@ function Locked({ c }) {
   );
 }
 
-function Pill({ c, label, on, view }) {
-  return (
-    <FlexWidget
-      clickAction="PERIOD"
-      clickActionData={{ view }}
-      accessibilityLabel={label}
-      style={{ flex: 1, height: 30, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? c.card : c.tint }}
-    >
-      <TextWidget text={label} style={{ fontSize: 12, color: on ? c.ink : c.muted, fontWeight: on ? '500' : '400' }} />
-    </FlexWidget>
-  );
-}
-
-function Tile({ c, label, text, color, uri }) {
-  return (
-    <FlexWidget {...link(uri)} style={{ flex: 1, backgroundColor: c.card, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 }}>
-      <TextWidget text={label} style={{ fontSize: 11, color: c.muted, letterSpacing: 0.08 }} />
-      <TextWidget text={text} style={{ fontSize: 17, color, fontFamily: SERIF }} maxLines={1} />
-    </FlexWidget>
-  );
-}
-
 function Body({ m, c, size }) {
-  const h = size.height || 360;
-  const showChart = h >= 250;
-  const comingRows = h >= 380 ? 2 : h >= 330 ? 1 : 0;
-  const counts = (k) => `bag://records?counts=${k}&from=${m.from || ''}&to=${m.to}`;
-  const svg = chartSvg(m.series, { inColor: c.in, outColor: c.out, dotRing: c.bg, width: 300, height: 56 });
+  const h = size.height || 300;
+  const comingRows = h >= 300 ? 2 : h >= 240 ? 1 : 0;
+  const spark = sparkSvg(m.line, { ink: c.spark, fut: c.fut, neg: c.out, dot: c.ink, width: 140, height: 44 });
   return (
-    <FlexWidget style={{ height: 'match_parent', width: 'match_parent', backgroundColor: c.bg, borderRadius: 28, padding: 14, flexGap: 10 }}>
+    <FlexWidget style={{ height: 'match_parent', width: 'match_parent', backgroundColor: c.bg, borderRadius: 30, borderWidth: 1, borderColor: c.border, padding: 16, flexGap: 10 }}>
       <FlexWidget style={{ width: 'match_parent', flexDirection: 'row', alignItems: 'center' }}>
-        <TextWidget text={`Bag · ${m.date}`} style={{ fontSize: 11, color: c.muted, letterSpacing: 0.08 }} />
+        <TextWidget text={`BAG · ${m.date.toUpperCase()}`} style={{ fontSize: 11, color: c.faint, letterSpacing: 0.07 }} />
         <FlexWidget style={{ flex: 1 }} />
-        <FlexWidget {...link('bag://add')} accessibilityLabel="Add record" style={{ height: 32, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1, borderColor: c.acc, flexDirection: 'row', alignItems: 'center' }}>
-          <TextWidget text="+ Add" style={{ fontSize: 13, color: c.acc }} />
+        <FlexWidget {...link('bag://add')} accessibilityLabel="Add record" style={{ width: 34, height: 34, borderRadius: 12, backgroundColor: c.plus, alignItems: 'center', justifyContent: 'center' }}>
+          <TextWidget text="+" style={{ fontSize: 20, color: c.plusInk }} />
         </FlexWidget>
       </FlexWidget>
 
-      <FlexWidget {...link('bag://home')} style={{ width: 'match_parent', backgroundColor: c.arch, borderTopLeftRadius: 90, borderTopRightRadius: 90, borderBottomLeftRadius: 16, borderBottomRightRadius: 16, paddingTop: 16, paddingBottom: 12, paddingHorizontal: 12, alignItems: 'center' }}>
-        <TextWidget text="Balance" style={{ fontSize: 11, color: c.archSub, letterSpacing: 0.08 }} />
-        <TextWidget text={m.balanceText} style={{ fontSize: 30, color: m.balance < 0 ? c.archNeg : c.archInk, fontFamily: SERIF }} maxLines={1} adjustsFontSizeToFit />
-        {m.second ? <TextWidget text={m.second} style={{ fontSize: 11, color: c.archSub }} /> : null}
-        <TextWidget text={m.verdict} style={{ fontSize: 12, color: c.archInk, marginTop: 4 }} maxLines={1} />
+      <FlexWidget {...link('bag://home')} style={{ width: 'match_parent', flexDirection: 'row', alignItems: 'flex-end', flexGap: 10 }}>
+        <FlexWidget>
+          <TextWidget text={m.balanceText} style={{ fontSize: 34, color: m.balance < 0 ? c.out : c.ink, fontFamily: SERIF }} maxLines={1} adjustsFontSizeToFit />
+          {m.byText ? (
+            <FlexWidget style={{ flexDirection: 'row', flexGap: 4 }}>
+              <TextWidget text={m.byText} style={{ fontSize: 11.5, color: c.muted }} />
+              <TextWidget text={m.byValueText} style={{ fontSize: 11.5, color: m.byValue < 0 ? c.out : c.ink, fontWeight: '600' }} />
+            </FlexWidget>
+          ) : m.second ? <TextWidget text={m.second} style={{ fontSize: 11.5, color: c.muted }} /> : null}
+        </FlexWidget>
+        <FlexWidget style={{ flex: 1 }} />
+        <SvgWidget svg={spark} style={{ width: 140, height: 44 }} />
       </FlexWidget>
 
-      {showChart ? (
-        <FlexWidget style={{ width: 'match_parent', flexDirection: 'row', backgroundColor: c.tint, borderRadius: 14, padding: 3, flexGap: 3 }}>
-          <Pill c={c} label="Week" view="week" on={m.view === 'week'} />
-          <Pill c={c} label="Month" view="month" on={m.view === 'month'} />
-          <Pill c={c} label="Total" view="total" on={m.view === 'total'} />
+      {m.accounts.length > 1 ? (
+        <FlexWidget style={{ width: 'match_parent', flexDirection: 'row', flexGap: 8 }}>
+          {m.accounts.map((a) => (
+            <FlexWidget key={a.id} {...link(`bag://records?account=${a.id}`)} style={{ flex: 1, backgroundColor: c.card, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7 }}>
+              <TextWidget text={a.text} style={{ fontSize: 12.5, color: a.negative ? c.out : c.ink }} maxLines={1} />
+            </FlexWidget>
+          ))}
         </FlexWidget>
       ) : null}
 
-      {showChart ? <SvgWidget svg={svg} {...link('bag://reports')} style={{ width: 'match_parent', height: 56 }} /> : null}
-
-      <FlexWidget style={{ width: 'match_parent', flexDirection: 'row', flexGap: 8 }}>
-        <Tile c={c} label="Cash in" text={m.inText} color={c.in} uri={counts('income')} />
-        <Tile c={c} label="Cash out" text={m.outText} color={c.out} uri={counts('expense')} />
-      </FlexWidget>
-
       {comingRows && m.coming.length ? (
         <FlexWidget style={{ width: 'match_parent', flexGap: 6 }}>
-          <TextWidget text="Coming up" style={{ fontSize: 11, color: c.muted, letterSpacing: 0.08 }} />
           {m.coming.slice(0, comingRows).map((it) => (
-            <FlexWidget key={it.key} {...link(it.link)} style={{ width: 'match_parent', flexDirection: 'row', alignItems: 'center', flexGap: 10, backgroundColor: c.card, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6 }}>
-              <FlexWidget style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: c.tint, alignItems: 'center', justifyContent: 'center' }}>
-                <TextWidget text={it.emoji} style={{ fontSize: 15 }} />
-              </FlexWidget>
+            <FlexWidget key={it.key} {...link(it.link)} style={{ width: 'match_parent', flexDirection: 'row', alignItems: 'center', flexGap: 10, backgroundColor: it.ask ? c.askBg : c.card, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 7 }}>
+              <TextWidget text={it.emoji} style={{ fontSize: 16 }} />
               <FlexWidget style={{ flex: 1 }}>
-                <TextWidget text={it.name} style={{ fontSize: 13, color: c.ink }} maxLines={1} truncate="END" />
-                <TextWidget text={it.sub} style={{ fontSize: 11, color: c.muted }} maxLines={1} />
+                <TextWidget text={`${it.name} ${it.amount.replace(/^[+−]/, '')}`} style={{ fontSize: 12.5, color: c.ink }} maxLines={1} truncate="END" />
+                <TextWidget text={it.sub} style={{ fontSize: 11, color: it.ask ? c.ask : c.muted }} maxLines={1} />
               </FlexWidget>
-              <TextWidget text={it.amount} style={{ fontSize: 13, color: it.kind === 'in' ? c.in : it.kind === 'out' ? c.out : c.ink }} />
+              {it.ask ? (
+                <FlexWidget {...link(it.payLink)} accessibilityLabel={`Mark ${it.name} paid`} style={{ height: 30, paddingHorizontal: 12, borderRadius: 10, backgroundColor: c.askBtn, alignItems: 'center', justifyContent: 'center' }}>
+                  <TextWidget text={it.payWord} style={{ fontSize: 12, color: c.askBtnInk, fontWeight: '600' }} />
+                </FlexWidget>
+              ) : <TextWidget text={it.amount} style={{ fontSize: 12.5, color: it.kind === 'in' ? c.in : it.kind === 'out' ? c.out : c.ink }} />}
             </FlexWidget>
           ))}
         </FlexWidget>

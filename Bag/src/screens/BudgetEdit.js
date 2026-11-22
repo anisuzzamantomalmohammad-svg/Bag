@@ -3,7 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, Chip, Chips, Field, IconBox, Seg, Screen, T, useTheme } from '../ui/kit';
+import { Bubble, Button, Card, Chip, Chips, Field, Seg, Screen, T, useTheme } from '../ui/kit';
+import { catColor } from '../lib/look';
 import { live } from '../lib/ledger';
 import { addMonths, today } from '../lib/dates';
 import { parseAmount, round2 } from '../lib/money';
@@ -44,7 +45,7 @@ export default function BudgetEdit({ categoryId }) {
     <Screen title={old ? 'Change budget' : 'Set a budget'} back="close" footer={<Button label="Save" onPress={save} />}>
       {categoryId && cat ? (
         <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <IconBox emoji={cat.emoji} />
+          <Bubble emoji={cat.emoji} color={catColor(cat)} size={40} />
           <T weight="medium">{cat.name}</T>
         </Card>
       ) : (

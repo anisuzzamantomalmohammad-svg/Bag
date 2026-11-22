@@ -1,8 +1,9 @@
 // What the home screen widget shows, worked out from the saved data. Kept
 // free of React and Android code so it can be tested and reused.
-import { allFlows, comingUp, displayName, incomeExpense, liveRecords, totalBalance } from '../lib/ledger';
-import { addDays, addMonths, daysBetween, fmtShort, lastDayOfMonth, monthLabel, MONTHS, parseYmd, periodOf, today as todayYmd } from '../lib/dates';
+import { accountBalance, allFlows, balanceLine, comingUp, live, displayName, dueToAsk, incomeExpense, itemEffect, itemRecord, liveRecords, totalBalance, upcomingUntil } from '../lib/ledger';
+import { addDays, addMonths, daysBetween, fmtDate, fmtShort, lastDayOfMonth, monthLabel, MONTHS, parseYmd, periodOf, today as todayYmd } from '../lib/dates';
 import { fmt, round2 } from '../lib/money';
+import { accountEmoji } from '../lib/look';
 
 const weekStartOf = (d) => (d.weekStart === 0 ? 0 : d.weekStart || 1);
 const PERIOD_WORD = { week: 'week', month: 'month' };
@@ -77,24 +78,50 @@ export function widgetModel(data, { now = todayYmd(), view = 'month', homePerUni
     verdict = `Down ${n(-net, { decimals: 0 })} this ${PERIOD_WORD[view]}. Easy does it.`;
   }
 
-  // Next two things: bills due, money owed to you, repeats.
+  // This week or month with Upcoming in it: say where it ends up instead.
+  if (view === 'week' || view === 'month') {
+    const end = periodOf(now, view, { weekStart: weekStartOf(data), monthStart: data.monthStartDay || 1 }).to;
+    const up = upcomingUntil(data, end, now);
+    if (up.count) {
+      const when = view === 'week' ? fmtDate(end, { weekday: true, long: true, year: false }).split(' ')[0] : fmtShort(end);
+      verdict = `By ${when}: ${n(round2(balance + up.total))}`;
+    }
+  }
+
+  // First what's waiting for a yes (with a Paid button), then what's next.
   const cats = data.categories || {};
-  const coming = comingUp(data, { days: 14, now }).slice(0, 2).map((it) => {
-    const r = it.record || (it.repeat && it.repeat.template) || {};
+  const asks = dueToAsk(data, now).filter((r) => (data.askLater || {})[r.id] !== now).map((r) => ({ key: r.id, date: r.date, record: r, kind: 'upcoming', ask: true }));
+  const later = comingUp(data, { days: 14, now }).filter((it) => !(it.kind === 'upcoming' && it.date <= now));
+  const coming = [...asks, ...later].slice(0, 2).map((it) => {
+    const r = itemRecord(it);
     const c = cats[r.categoryId];
     const a = Number(r.amount) || 0;
-    const incoming = r.type === 'income' || it.kind === 'owedToMe';
+    const eff = itemEffect(it);
     const d = parseYmd(it.date);
     const day = it.date === now ? 'Today' : it.date === addDays(now, 1) ? 'Tomorrow' : d.toLocaleDateString('en-NZ', { weekday: 'short' });
+    const income = r.type === 'income';
     return {
       key: it.key,
-      name: it.kind === 'owedToMe' && r.who ? `${r.who} owes you` : displayName(r, data) || 'Repeat',
-      emoji: r.type === 'transfer' ? '🔀' : c && !c.deleted ? c.emoji : it.kind === 'owedToMe' ? '🤝' : '🏷️',
-      sub: it.date < now ? `Overdue · ${fmtShort(it.date)}` : day,
-      amount: `${incoming ? '+' : '−'}${n(a)}`,
-      kind: r.type === 'income' ? 'in' : it.kind === 'owedToMe' ? 'neutral' : 'out',
+      name: it.kind === 'owedToMe' && r.who ? `${r.who} owes you` : it.kind === 'due' && r.who ? `You owe ${r.who}` : displayName(r, data) || 'Repeat',
+      emoji: r.type === 'transfer' ? '🔀' : c && !c.deleted ? c.emoji : it.kind === 'owedToMe' || it.kind === 'due' ? '🤝' : '🏷️',
+      sub: it.ask ? (income ? 'Did it arrive?' : 'Did you pay it?') : it.date < now ? `Overdue · ${fmtShort(it.date)}` : day,
+      amount: `${eff > 0 ? '+' : eff < 0 ? '−' : ''}${n(a)}`,
+      kind: eff > 0 ? 'in' : eff < 0 ? 'out' : 'neutral',
       link: it.record ? `bag://record/${it.record.id}` : `bag://repeat/${it.repeat.id}`,
+      ask: !!it.ask,
+      payLink: it.ask ? `bag://pay/${it.record.id}` : null,
+      payWord: income ? 'Got it' : 'Paid',
     };
+  });
+
+  // The little line: the last 30 days, then dotted to the end of the month.
+  const monthEnd = periodOf(now, 'month', { weekStart: weekStartOf(data), monthStart: data.monthStartDay || 1 }).to;
+  let line = null;
+  try { line = balanceLine(data, { flows, from: addDays(now, -30), now, until: monthEnd }); } catch (e) { line = null; }
+  const byEnd = upcomingUntil(data, monthEnd, now);
+  const accounts = live(data.accounts || {}).sort((x, y) => (x.order || 0) - (y.order || 0)).slice(0, 3).map((a) => {
+    const b = accountBalance(data, a, { flows, homePerUnit });
+    return { id: a.id, text: `${accountEmoji(a)} ${n(b.native)}`, negative: b.native < 0 };
   });
 
   const sec = data.secondOn && (data.secondShow || {}).widget && data.secondCurrency && data.secondCurrency !== data.homeCurrency ? homePerUnit(data.secondCurrency) : null;
@@ -114,7 +141,32 @@ export function widgetModel(data, { now = todayYmd(), view = 'month', homePerUni
     from: from || since,
     to,
     coming,
+    line,
+    accounts,
+    byText: byEnd.count ? `By ${fmtShort(monthEnd)}` : null,
+    byValue: byEnd.count ? round2(balance + byEnd.total) : null,
+    byValueText: byEnd.count ? n(round2(balance + byEnd.total)) : null,
   };
+}
+
+// The balance line as a small SVG: solid for what happened, dotted for what's coming.
+export function sparkSvg(line, { ink, fut, neg, dot, width = 140, height = 44 }) {
+  if (!line || !(line.pts.length + line.fut.length)) return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"/>`;
+  const all = [...line.pts, ...line.fut];
+  const vs = all.map((p) => p.v);
+  const lo = Math.min(...vs);
+  const hi = Math.max(...vs);
+  const sp = hi - lo || 1;
+  const t0 = parseYmd(all[0].date).getTime();
+  const span = Math.max(1, parseYmd(all[all.length - 1].date).getTime() - t0);
+  const xy = (p) => [3 + ((parseYmd(p.date).getTime() - t0) / span) * (width - 6), 4 + ((hi - p.v) / sp) * (height - 8)];
+  const d = (arr) => arr.map((p, k) => { const [x, y] = xy(p); return `${k ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`; }).join(' ');
+  const last = line.pts.length ? xy(line.pts[line.pts.length - 1]) : xy(line.fut[0]);
+  const futColor = line.end < 0 || line.end < line.now ? neg : fut;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`
+    + (line.pts.length > 1 ? `<path d="${d(line.pts)}" fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>` : '')
+    + (line.fut.length > 1 ? `<path d="${d(line.fut)}" fill="none" stroke="${futColor}" stroke-width="1.8" stroke-dasharray="2 4" stroke-linecap="round"/>` : '')
+    + `<circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.2" fill="${dot}"/></svg>`;
 }
 
 // The chart as an SVG string: two smooth lines, a dot where each ends.

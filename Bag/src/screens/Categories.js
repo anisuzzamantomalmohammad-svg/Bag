@@ -3,7 +3,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 import { useApp } from '../state/store';
-import { Button, Card, Chip, Chips, Field, Icon, IconBox, Row, Screen, Seg, Sheet, T, useTheme } from '../ui/kit';
+import { Bubble, Button, Card, Chip, Chips, Field, Icon, Row, Screen, Seg, Sheet, T, useTheme } from '../ui/kit';
+import { catColor } from '../lib/look';
+import { CATEGORY_COLORS } from '../data/defaults';
 import { IconButton } from '../ui/parts';
 import { live, liveRecords } from '../lib/ledger';
 import { EMOJI_SUGGESTIONS } from '../data/defaults';
@@ -23,6 +25,7 @@ function EditSheet({ cat, kind, visible, onClose }) {
   const { data } = app;
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🏷️');
+  const [color, setColor] = useState(CATEGORY_COLORS[0]);
   const [typing, setTyping] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [moveTo, setMoveTo] = useState(null);
@@ -31,6 +34,7 @@ function EditSheet({ cat, kind, visible, onClose }) {
     if (!visible) return;
     setName(cat ? cat.name : '');
     setEmoji(cat ? cat.emoji : kind === 'income' ? '💰' : '🏷️');
+    setColor(cat ? catColor(cat) : CATEGORY_COLORS[live(data.categories).length % CATEGORY_COLORS.length]);
     setTyping('');
     setDeleting(false);
     setMoveTo(null);
@@ -43,7 +47,7 @@ function EditSheet({ cat, kind, visible, onClose }) {
     const n = name.trim();
     if (!n) { setErr('Give it a name'); return; }
     if (live(data.categories).some((c) => c.kind === kind && c.name.trim().toLowerCase() === n.toLowerCase() && (!cat || c.id !== cat.id))) { setErr('There is already one with that name'); return; }
-    app.saveCategory({ id: cat ? cat.id : undefined, name: n, emoji: emoji || '🏷️', kind });
+    app.saveCategory({ id: cat ? cat.id : undefined, name: n, emoji: emoji || '🏷️', color, kind });
     onClose();
   };
 
@@ -69,10 +73,18 @@ function EditSheet({ cat, kind, visible, onClose }) {
     <Sheet visible={visible} onClose={onClose} title={cat ? 'Edit category' : 'New category'}
       footer={<Button label="Save" onPress={save} />}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <IconBox emoji={emoji} size={56} />
+        <Bubble emoji={emoji} color={color} size={56} />
         <Field value={name} onChangeText={(t) => { setErr(''); setName(t); }} placeholder="Name" style={{ flex: 1 }} inputStyle={{ backgroundColor: th.soft }} autoFocus={!cat} autoCapitalize="sentences" />
       </View>
       {err ? <T size={13} color={th.danger}>{err}</T> : null}
+      <T size={13} weight="semi" color={th.muted}>Colour</T>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {CATEGORY_COLORS.map((c) => (
+          <Pressable key={c} onPress={() => setColor(c)} accessibilityRole="radio" accessibilityState={{ selected: color === c }} accessibilityLabel={`Colour ${c}`} style={{ width: 34, height: 34, borderRadius: 17, borderWidth: color === c ? 2.5 : 0, borderColor: th.ink, padding: 3 }}>
+            <View style={{ flex: 1, borderRadius: 14, backgroundColor: c }} />
+          </Pressable>
+        ))}
+      </View>
       <T size={13} weight="semi" color={th.muted}>Emoji</T>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
         {EMOJI_SUGGESTIONS.map((e) => (
@@ -118,10 +130,10 @@ export default function Categories({ kind: startKind, edit }) {
 
   return (
     <Screen title="Categories" right={<IconButton name="plus" label="New category" onPress={() => { setEditing(null); setOpen(true); }} />}>
-      <Seg items={[{ id: 'expense', label: 'Spending' }, { id: 'income', label: 'Income' }]} value={kind} onChange={setKind} />
+      <Seg items={[{ id: 'expense', label: 'Cash out' }, { id: 'income', label: 'Cash in' }]} value={kind} onChange={setKind} />
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
         {list.map((c, i) => (
-          <Row key={c.id} first={i === 0} minHeight={60} left={<IconBox emoji={c.emoji} />} label={c.name}
+          <Row key={c.id} first={i === 0} minHeight={60} left={<Bubble emoji={c.emoji} color={catColor(c)} size={38} />} label={c.name}
             sub={`${counts[c.id] || 0} ${counts[c.id] === 1 ? 'record' : 'records'}`}
             onPress={() => { setEditing(c); setOpen(true); }} chevron={false}
             right={

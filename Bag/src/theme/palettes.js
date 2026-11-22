@@ -8,24 +8,33 @@ import { ACCENTS } from '../data/defaults';
 // ice-blue arch.
 const LIGHT = {
   mode: 'light',
-  bg: '#F1F3F6', card: '#FFFFFF', soft: '#E9EDF2', track: '#DDE2E9', line: '#E6EAF0', lineStrong: '#D3DAE3',
-  ink: '#1A2230', muted: '#4A5768', faint: '#5D6B7D', faint2: '#8391A3', disabled: '#A6B1BE',
-  warn: '#9A4D00', warnBar: '#D97706', danger: '#C0392B', dangerSoft: '#FBEFEE', catBar: '#A6B1BE',
-  overlay: 'rgba(26,34,48,0.4)', statusBar: 'dark-content', tabBg: '#FFFFFF', chipOn: '#3B4B5E', chipOnInk: '#F1F3F6', segOn: '#FFFFFF',
+  bg: '#F1F3F6', card: '#FFFFFF', soft: '#E7EBF0', track: '#E3E8EE', line: '#E3E8EE', lineStrong: '#D3DAE3',
+  ink: '#18202B', muted: '#4A5768', faint: '#6B7888', faint2: '#8391A3', disabled: '#A6B1BE',
+  warn: '#8A5300', warnSoft: '#FCEFD3', warnBorder: '#F0D9A0', warnBtn: '#E9A93A', warnBtnInk: '#2A1A00', warnBar: '#D97706', danger: '#C0392B', dangerSoft: '#FBEFEE', catBar: '#A6B1BE',
+  overlay: 'rgba(26,34,48,0.4)', statusBar: 'dark-content', tabBg: 'rgba(255,255,255,0.94)', chipOn: '#3B4B5E', chipOnInk: '#F4F6F9', segOn: '#FFFFFF',
   importSoft: '#E4F2EA', importInk: '#2E8A5E',
+  // A faint colour at the top of each tab, so you know where you are.
+  tints: { Home: '#DCE8F6', Records: '#E2E4F7', Upcoming: '#F7E2E6', Reports: '#E9E2F7' },
+  lineA: '#3B6EA8', lineB: '#2F3D4E', area: '#3B6EA8', dot: '#18202B', dotRing: '#F1F3F6',
+  roseA: '#FBE9EA', roseB: '#F7F1F4', roseBorder: '#F0D3D6', plusA: '#55697F', plusB: '#2F3D4E', plusInk: '#FFFFFF',
+  pinBg: '#FCEBD8', barA: '#D5DCE5', barB: '#E6EAF0', barOnA: '#55697F', barOnB: '#2F3D4E',
 };
 
 const DARK = {
   mode: 'dark',
-  bg: '#121821', card: '#1A222D', soft: '#1E2733', track: '#1E2733', line: '#232C38', lineStrong: '#313C4A',
-  ink: '#E8EDF3', muted: '#9AA8B8', faint: '#8494A6', faint2: '#6B7A8C', disabled: '#4E5B6B',
-  warn: '#FBBF24', warnBar: '#F59E0B', danger: '#F2766F', dangerSoft: '#3A2226', catBar: '#4E5B6B',
-  overlay: 'rgba(0,0,0,0.55)', statusBar: 'light-content', tabBg: '#161D27', chipOn: '#D6E3F0', chipOnInk: '#121821', segOn: '#2A3442',
-  importSoft: '#16302A', importInk: '#4BBF8A',
+  bg: '#0E131A', card: '#151C25', soft: '#1C2430', track: '#151C25', line: '#212A35', lineStrong: '#2A3441',
+  ink: '#EEF2F6', muted: '#9AA7B6', faint: '#6F7D8D', faint2: '#5D6B7D', disabled: '#4E5B6B',
+  warn: '#F5C35B', warnSoft: '#2E2615', warnBorder: '#4A3B17', warnBtn: '#F5C35B', warnBtnInk: '#2A2213', warnBar: '#F59E0B', danger: '#F0857E', dangerSoft: '#3A2226', catBar: '#4E5B6B',
+  overlay: 'rgba(0,0,0,0.55)', statusBar: 'light-content', tabBg: 'rgba(21,28,37,0.94)', chipOn: '#D6E3F0', chipOnInk: '#0E131A', segOn: '#1C2430',
+  importSoft: '#16302A', importInk: '#5CC79A',
+  tints: { Home: '#18263A', Records: '#1A2338', Upcoming: '#2A1C22', Reports: '#20203A' },
+  lineA: '#7FB2F0', lineB: '#D6E3F0', area: '#7FB2F0', dot: '#EEF2F6', dotRing: '#0E131A',
+  roseA: '#2A1E22', roseB: '#17181F', roseBorder: '#3A2A2E', plusA: '#EEF4FA', plusB: '#A9C1DA', plusInk: '#0E131A',
+  pinBg: '#2A2018', barA: '#2A3542', barB: '#1E2733', barOnA: '#EEF4FA', barOnB: '#9FB8D3',
 };
 
 const MONEY = {
-  greenRed: { light: { in: '#2E8A5E', out: '#C0392B' }, dark: { in: '#4BBF8A', out: '#F2766F' } },
+  greenRed: { light: { in: '#2E8A5E', out: '#C0392B' }, dark: { in: '#5CC79A', out: '#F0857E' } },
   blueOrange: { light: { in: '#1D4ED8', out: '#C2410C' }, dark: { in: '#8AB4FF', out: '#FB923C' } },
 };
 

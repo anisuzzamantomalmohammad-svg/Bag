@@ -2,13 +2,14 @@
 // choice, text, date range), the pending "did it happen?" check, marking a
 // debt paid, and the Excel export.
 import React, { useMemo, useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Chip, Chips, Field, Icon, IconBox, Row, Seg, Sheet, T, Toggle, useTheme } from '../ui/kit';
+import { Bubble, Button, Chip, Chips, Field, Icon, IconBox, Row, Seg, Sheet, Squish, T, Toggle, useTheme } from '../ui/kit';
+import { accountColor, accountEmoji, catColor } from '../lib/look';
 import { Calendar } from '../ui/calendar';
 import { accountBalance, displayName, live } from '../lib/ledger';
-import { addDays, addMonths, fmtDate, fmtShort, periodOf, today } from '../lib/dates';
+import { MONTHS, addDays, addMonths, daysBetween, fmtDate, fmtShort, lastDayOfMonth, periodOf, today } from '../lib/dates';
 import { parseAmount } from '../lib/money';
 import { currencyName, sortedCurrencies } from '../data/currencies';
 import { shareExcel } from '../lib/files';
@@ -43,7 +44,7 @@ function AccountSheet({ p, done }) {
       {list.map((a, i) => {
         const bal = accountBalance(app.data, a, { flows: app.flows, homePerUnit: app.homePerUnit });
         return (
-          <Row key={a.id} first={i === 0} label={a.name} sub={a.currency !== app.data.homeCurrency ? currencyName(a.currency) : undefined}
+          <Row key={a.id} first={i === 0} left={<Bubble emoji={accountEmoji(a)} color={accountColor(a)} size={36} />} label={a.name} sub={a.currency !== app.data.homeCurrency ? currencyName(a.currency) : undefined}
             value={app.money(bal.native, { currency: a.currency })} valueColor={bal.native < 0 ? th.out : th.muted}
             right={p.value === a.id ? <Icon name="check" size={18} color={th.accent} /> : null}
             onPress={() => { p.onPick && p.onPick(a.id); done(); }} chevron={false} />
@@ -54,19 +55,31 @@ function AccountSheet({ p, done }) {
   );
 }
 
+// A grid of coloured bubbles. New at the end opens the category list.
 function CategorySheet({ p, done }) {
   const { data } = useApp();
   const nav = useNav();
   const th = useTheme();
   const list = live(data.categories).filter((c) => !p.kind || c.kind === p.kind).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const cell = { alignItems: 'center', paddingVertical: 8, gap: 6 };
   return (
-    <View>
-      {list.map((c, i) => (
-        <Row key={c.id} first={i === 0} left={<IconBox emoji={c.emoji} />} label={c.name}
-          right={p.value === c.id ? <Icon name="check" size={18} color={th.accent} /> : null}
-          onPress={() => { p.onPick && p.onPick(c.id); done(); }} chevron={false} />
-      ))}
-      <Row label={<T color={th.accent} weight="medium">Add or edit categories</T>} left={<Icon name="edit-2" size={17} color={th.accent} />} onPress={() => { done(); nav.push('categories', { kind: p.kind }); }} chevron={false} />
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -4 }}>
+      {list.map((c) => {
+        const col = catColor(c);
+        const on = p.value === c.id;
+        return (
+          <View key={c.id} style={{ width: '25%' }}>
+            <Squish style={cell} onPress={() => { p.onPick && p.onPick(c.id); done(); }} accessibilityLabel={c.name}>
+              <Bubble emoji={c.emoji} color={col} size={50} style={on ? { borderWidth: 2, borderColor: col } : null} />
+              <T size={11.5} color={on ? th.ink : th.muted} center numberOfLines={1} style={{ paddingHorizontal: 2 }}>{c.name}</T>
+            </Squish>
+          </View>
+        );
+      })}
+      <View style={{ width: '25%' }}><Squish style={cell} onPress={() => { done(); nav.push('categories', { kind: p.kind }); }} accessibilityLabel="Add or edit categories">
+        <View style={{ width: 50, height: 50, borderRadius: 18, borderWidth: 1.5, borderStyle: 'dashed', borderColor: th.lineStrong, alignItems: 'center', justifyContent: 'center' }}><Icon name="plus" size={20} color={th.muted} /></View>
+        <T size={11.5} color={th.muted} center>New / edit</T>
+      </Squish></View>
     </View>
   );
 }
@@ -167,37 +180,86 @@ export function rangeLabel(from, to) {
   return from ? `From ${fmtShort(from)}` : `Up to ${fmtShort(to)}`;
 }
 
+// Dates: quick picks, then Months (tap one month, or two for everything in
+// between) or Days (any date to any date).
 function RangeSheet({ p, done }) {
   const { data } = useApp();
   const th = useTheme();
   const presets = rangePresets(data);
+  const now = today();
+  const [tab, setTab] = useState('months');
   const [from, setFrom] = useState(p.from || null);
   const [to, setTo] = useState(p.to || null);
   const [open, setOpen] = useState(null); // 'from' | 'to'
-  const [month, setMonth] = useState((p.from || today()).slice(0, 7));
+  const [month, setMonth] = useState((p.from || now).slice(0, 7));
+  const [year, setYear] = useState(Number((p.from || now).slice(0, 4)));
+  const [ma, setMa] = useState(null);
+  const [mb, setMb] = useState(null);
   const ws = data.weekStart === 0 ? 0 : data.weekStart || 1;
   const pick = (r) => { p.onPick && p.onPick(r.from, r.to, r.id); done(); };
+  const firstYear = Math.min(Number(now.slice(0, 4)) - 1, ...Object.values(data.records || {}).filter((r) => r && !r.deleted && r.date).map((r) => Number(r.date.slice(0, 4))));
+  const key = (y, m) => y * 12 + m;
+  const nowK = key(Number(now.slice(0, 4)), Number(now.slice(5, 7)) - 1);
+  const tapMonth = (k) => {
+    if (ma === null || mb !== null) { setMa(k); setMb(null); } else if (k !== ma) setMb(k);
+  };
+  const lo = ma === null ? null : mb === null ? ma : Math.min(ma, mb);
+  const hi = ma === null ? null : mb === null ? ma : Math.max(ma, mb);
+  const ymOf = (k) => `${Math.floor(k / 12)}-${String((k % 12) + 1).padStart(2, '0')}`;
+  const monthRange = lo === null ? null : { from: `${ymOf(lo)}-01`, to: lastDayOfMonth(ymOf(hi)) };
   return (
     <>
-      <View>
-        {presets.map((r, i) => (
-          <Row key={r.id} first={i === 0} minHeight={48} label={r.label} value={r.from ? rangeLabel(r.from, r.to) : ''}
-            right={p.from === r.from && p.to === r.to ? <Icon name="check" size={18} color={th.accent} /> : null}
-            onPress={() => pick(r)} chevron={false} />
-        ))}
-      </View>
-      <T size={13} weight="semi" color={th.muted} style={{ marginTop: 6 }}>Pick your own dates</T>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Chip label={from ? `From ${fmtShort(from)}` : 'From'} on={open === 'from'} onPress={() => { setOpen(open === 'from' ? null : 'from'); if (from) setMonth(from.slice(0, 7)); }} style={{ flex: 1 }} />
-        <Chip label={to ? `To ${fmtShort(to)}` : 'To'} on={open === 'to'} onPress={() => { setOpen(open === 'to' ? null : 'to'); if (to) setMonth(to.slice(0, 7)); }} style={{ flex: 1 }} />
-      </View>
-      {open ? (
-        <Calendar month={month} onMonth={setMonth} value={open === 'from' ? from : to} weekStart={ws}
-          onPick={(d) => {
-            if (open === 'from') { setFrom(d); if (to && d > to) setTo(null); setOpen('to'); } else { setTo(d); if (from && d < from) setFrom(d); setOpen(null); }
-          }} />
-      ) : null}
-      <Button label="Show these dates" disabled={!from && !to} onPress={() => pick({ from, to, id: 'custom' })} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} style={{ marginHorizontal: -20 }}>
+        <View style={{ width: 12 }} />
+        {presets.map((r) => <Chip key={r.id} label={r.label} on={p.from === r.from && p.to === r.to} onPress={() => pick(r)} />)}
+        <View style={{ width: 12 }} />
+      </ScrollView>
+      <Seg small items={[{ id: 'months', label: 'Months' }, { id: 'days', label: 'Days' }]} value={tab} onChange={setTab} style={{ marginTop: 4 }} />
+      {tab === 'months' ? (
+        <>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Pressable onPress={() => setYear(Math.max(firstYear, year - 1))} hitSlop={10} accessibilityRole="button" accessibilityLabel="Year before" style={{ padding: 8, opacity: year > firstYear ? 1 : 0.3 }}><Icon name="chevron-left" size={20} /></Pressable>
+            <T serif size={20}>{year}</T>
+            <Pressable onPress={() => setYear(Math.min(Number(now.slice(0, 4)), year + 1))} hitSlop={10} accessibilityRole="button" accessibilityLabel="Next year" style={{ padding: 8, opacity: year < Number(now.slice(0, 4)) ? 1 : 0.3 }}><Icon name="chevron-right" size={20} /></Pressable>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 6 }}>
+            {MONTHS.map((m, i) => {
+              const k = key(year, i);
+              const future = k > nowK;
+              const end = k === lo || k === hi;
+              const mid = lo !== null && k > lo && k < hi;
+              const radius = { borderTopLeftRadius: k === lo || !mid ? 999 : 0, borderBottomLeftRadius: k === lo || !mid ? 999 : 0, borderTopRightRadius: k === hi || !mid ? 999 : 0, borderBottomRightRadius: k === hi || !mid ? 999 : 0 };
+              if (mid || (end && lo !== hi)) {
+                radius.borderTopLeftRadius = k === lo ? 999 : 0; radius.borderBottomLeftRadius = k === lo ? 999 : 0;
+                radius.borderTopRightRadius = k === hi ? 999 : 0; radius.borderBottomRightRadius = k === hi ? 999 : 0;
+              }
+              return (
+                <Pressable key={m} disabled={future} onPress={() => tapMonth(k)} accessibilityRole="button" accessibilityState={{ selected: end || mid, disabled: future }} accessibilityLabel={`${m} ${year}`}
+                  style={[{ width: '25%', height: 42, alignItems: 'center', justifyContent: 'center', opacity: future ? 0.3 : 1, backgroundColor: end ? th.chipOn : mid ? th.soft : 'transparent' }, radius]}>
+                  <T size={14} weight="medium" color={end ? th.chipOnInk : th.ink}>{m}</T>
+                </Pressable>
+              );
+            })}
+          </View>
+          <T size={13} color={th.muted}>{monthRange ? `${rangeLabel(monthRange.from, monthRange.to)}${hi > lo ? ` · ${hi - lo + 1} months` : '. Tap another month for a range.'}` : 'Tap a month. Tap a second one for everything in between.'}</T>
+          <Button label="Show these" disabled={!monthRange} onPress={() => pick({ ...monthRange, id: 'custom' })} />
+        </>
+      ) : (
+        <>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Chip label={from ? `From ${fmtShort(from)}` : 'From'} on={open === 'from'} onPress={() => { setOpen(open === 'from' ? null : 'from'); if (from) setMonth(from.slice(0, 7)); }} style={{ flex: 1 }} />
+            <Chip label={to ? `To ${fmtShort(to)}` : 'To'} on={open === 'to'} onPress={() => { setOpen(open === 'to' ? null : 'to'); if (to) setMonth(to.slice(0, 7)); }} style={{ flex: 1 }} />
+          </View>
+          {open ? (
+            <Calendar month={month} onMonth={setMonth} value={open === 'from' ? from : to} weekStart={ws}
+              onPick={(d) => {
+                if (open === 'from') { setFrom(d); if (to && d > to) setTo(null); setOpen('to'); } else { setTo(d); if (from && d < from) setFrom(d); setOpen(null); }
+              }} />
+          ) : null}
+          {from && to ? <T size={13} color={th.muted}>{rangeLabel(from, to)} · {daysBetween(from, to) + 1} days</T> : null}
+          <Button label="Show these dates" disabled={!from && !to} onPress={() => pick({ from, to, id: 'custom' })} />
+        </>
+      )}
     </>
   );
 }
@@ -208,10 +270,11 @@ function AccountChips({ value, onChange }) {
   const { data } = useApp();
   const list = live(data.accounts);
   if (list.length < 2) return null;
-  return <Chips>{list.map((a) => <Chip key={a.id} label={a.name} on={value === a.id} onPress={() => onChange(a.id)} />)}</Chips>;
+  return <Chips>{list.map((a) => <Chip key={a.id} label={`${accountEmoji(a)} ${a.name}`} on={value === a.id} onPress={() => onChange(a.id)} />)}</Chips>;
 }
 
-// A repeat made this record and wants to know: did it happen?
+// Something Upcoming: did you pay it? Change the amount or account first if
+// it was different.
 function ConfirmSheet({ p, done }) {
   const app = useApp();
   const nav = useNav();
@@ -220,27 +283,29 @@ function ConfirmSheet({ p, done }) {
   const [amount, setAmount] = useState(r ? String(r.amount) : '');
   const [accountId, setAccountId] = useState(r ? r.accountId : null);
   if (!r || r.deleted) return <T color={th.faint}>This one's already been dealt with.</T>;
-  if (r.status !== 'pending') return <T color={th.faint}>Already {r.status === 'skipped' ? 'skipped' : r.type === 'income' ? 'marked received' : 'marked paid'}.</T>;
+  if (r.status !== 'pending' && r.status !== 'scheduled') return <T color={th.faint}>Already {r.status === 'skipped' ? 'skipped' : r.type === 'income' ? 'marked received' : 'marked paid'}.</T>;
   const income = r.type === 'income';
+  const now = today();
   return (
     <>
-      <T size={14} color={th.muted}>{fmtDate(r.date, { weekday: true })}{r.repeatId ? ' · from a repeat' : ''}</T>
+      <T size={14} color={th.muted}>{r.date < now ? 'Was due' : r.date === now ? 'Due today,' : 'Due'} {fmtDate(r.date, { weekday: true, year: false })}{r.repeatId ? ' · repeats' : ''}</T>
       <Field label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" big inputStyle={{ backgroundColor: th.soft }} />
       <AccountChips value={accountId} onChange={setAccountId} />
-      <Button label={income ? 'Yes, it arrived' : 'Yes, I paid it'} onPress={() => {
+      <Button label={income ? 'Yes, got it' : r.type === 'transfer' ? 'Yes, moved' : 'Yes, paid'} onPress={() => {
         const n = parseAmount(amount);
         app.confirmPending(r.id, { amount: n > 0 ? n : r.amount, accountId });
         done();
       }} />
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Button label="Skip this time" kind="secondary" style={{ flex: 1 }} onPress={() => { app.skipPending(r.id); done(); }} />
+        <Button label="Not yet" kind="secondary" style={{ flex: 1 }} onPress={() => { app.askLater(r.id); done(); }} />
+        {r.repeatId ? <Button label="Skip this one" kind="secondary" style={{ flex: 1 }} onPress={() => { app.skipPending(r.id); done(); }} /> : null}
         <Button label="Open" kind="secondary" style={{ flex: 1 }} onPress={() => { done(); nav.push('record', { id: r.id }); }} />
       </View>
     </>
   );
 }
 
-// Mark a debt paid (I owe) or received (owed to me).
+// People: mark borrowed money paid back, or lent money back with you.
 function SettleSheet({ p, done }) {
   const app = useApp();
   const th = useTheme();
@@ -255,7 +320,7 @@ function SettleSheet({ p, done }) {
   return (
     <>
       <T size={14} color={th.muted}>{app.money(r.amount, { currency: r.currency })}{r.who ? ` · ${r.who}` : ''}</T>
-      <T size={13} weight="semi" color={th.muted}>{owe ? 'Paid on' : 'Got it on'}</T>
+      <T size={13} weight="semi" color={th.muted}>{owe ? 'Paid back on' : 'Got it back on'}</T>
       <Chips>
         <Chip label="Today" on={date === now && !cal} onPress={() => { setDate(now); setCal(false); }} />
         <Chip label="Yesterday" on={date === addDays(now, -1) && !cal} onPress={() => { setDate(addDays(now, -1)); setCal(false); }} />
@@ -265,7 +330,7 @@ function SettleSheet({ p, done }) {
       {cal ? <Calendar month={month} onMonth={setMonth} value={date} onPick={(d) => { setDate(d); setCal(false); }} weekStart={app.data.weekStart === 0 ? 0 : app.data.weekStart || 1} /> : null}
       {live(app.data.accounts).length > 1 ? <T size={13} weight="semi" color={th.muted}>{owe ? 'From' : 'Into'}</T> : null}
       <AccountChips value={accountId} onChange={setAccountId} />
-      <Button label={owe ? 'Mark paid' : 'Mark received'} onPress={() => { app.settleRecord(r.id, { date, accountId }); done(); }} />
+      <Button label={owe ? 'Mark paid back' : 'Mark got it back'} onPress={() => { app.settleRecord(r.id, { date, accountId }); done(); }} />
     </>
   );
 }
@@ -293,7 +358,7 @@ function ExportSheet({ p, done }) {
     <>
       {has ? <Seg items={[{ id: 'range', label: rangeLabel(p.from, p.to) }, { id: 'all', label: 'Everything' }]} value={which} onChange={setWhich} /> : null}
       <View>
-        <Row first label="Summary sheet" sub="Income and spending by month, worked out with formulas" right={<Toggle value={summary} onChange={setSummary} label="Summary sheet" />} />
+        <Row first label="Summary sheet" sub="Cash in and cash out by month, worked out with formulas" right={<Toggle value={summary} onChange={setSummary} label="Summary sheet" />} />
         <Row label="Running balance" sub="Balance after every record" right={<Toggle value={running} onChange={setRunning} label="Running balance" />} />
       </View>
       <T size={13} color={th.faint}>The file opens in Excel, Google Sheets or Numbers. You can import it back into Bag too.</T>
@@ -313,8 +378,8 @@ const KINDS = {
   text: { title: (p) => p.title, C: TextSheet },
   rate: { title: () => 'Exchange rate', C: RateSheet },
   range: { title: () => 'Dates', C: RangeSheet },
-  confirm: { title: (p, data) => { const r = data.records[p.id]; return r ? `${displayName(r, data)}: did it ${r.type === 'income' ? 'arrive' : 'go out'}?` : 'Check'; }, C: ConfirmSheet },
-  settle: { title: (p, data) => { const r = data.records[p.id]; return r && r.type === 'owed' ? 'Mark received' : 'Mark paid'; }, C: SettleSheet },
+  confirm: { title: (p, data) => { const r = data.records[p.id]; return r ? `${displayName(r, data)}: ${r.type === 'income' ? 'did it arrive?' : r.type === 'transfer' ? 'did you move it?' : 'did you pay it?'}` : 'Check'; }, C: ConfirmSheet },
+  settle: { title: (p, data) => { const r = data.records[p.id]; return r && r.type === 'owed' ? 'Got it back' : 'Paid it back'; }, C: SettleSheet },
   export: { title: () => 'Export to Excel', C: ExportSheet },
 };
 

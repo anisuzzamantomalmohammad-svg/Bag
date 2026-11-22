@@ -4,7 +4,8 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Bar, Button, Card, IconBox, Screen, T, useTheme } from '../ui/kit';
+import { Bar, Bubble, Button, Card, Screen, T, useTheme } from '../ui/kit';
+import { catColor } from '../lib/look';
 import { IconButton, RecordRow } from '../ui/parts';
 import { budgetStatus, filterRecords } from '../lib/ledger';
 import { addMonths, fmtShort, lastDayOfMonth, monthLabel, today } from '../lib/dates';
@@ -52,10 +53,10 @@ export default function CategoryDetail({ id, from: startFrom, to: startTo }) {
   return (
     <Screen title="" right={<IconButton name="edit-2" label="Edit category" onPress={() => nav.push('categories', { kind: c.kind, edit: c.id })} />}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <IconBox emoji={c.emoji} size={52} />
+        <Bubble emoji={c.emoji} color={catColor(c)} size={56} />
         <View style={{ flex: 1 }}>
           <T size={22} weight="semi">{c.name}</T>
-          <T size={13} color={th.faint}>{income ? 'Income' : 'Spending'}{avg ? ` · about ${app.money(avg)} a month` : ''}</T>
+          <T size={13} color={th.faint}>{income ? 'Cash in' : 'Cash out'}{avg ? ` · about ${app.money(avg)} a month` : ''}</T>
         </View>
       </View>
 
@@ -68,7 +69,7 @@ export default function CategoryDetail({ id, from: startFrom, to: startTo }) {
               <Bar parts={[{ pct: used, color: col }, { pct: st.limit ? Math.min(100 - used, (st.planned / st.limit) * 100) : 0, color: th.planned }]} style={{ marginTop: 10 }} />
               <T size={13} color={st.state === 'over' ? th.out : st.state === 'warn' ? th.warn : th.faint} style={{ marginTop: 8 }}>
                 {st.state === 'over' ? `${app.money(-st.left)} over` : `${app.money(st.left)} left`}
-                {st.planned ? ` · ${app.money(st.planned)} planned (${st.plannedCount})` : ''} · resets {fmtShort(st.to)}
+                {st.planned ? ` · ${app.money(st.planned)} upcoming (${st.plannedCount})` : ''} · resets {fmtShort(st.to)}
               </T>
               <Button label="Change budget" kind="secondary" small style={{ marginTop: 12, alignSelf: 'flex-start' }} onPress={() => nav.push('budget', { categoryId: id })} />
             </>

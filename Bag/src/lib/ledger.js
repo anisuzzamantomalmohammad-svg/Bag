@@ -1,15 +1,16 @@
 // Bag's money rules, in one place.
 //
 // A record is one thing that happened or will happen:
-//   expense   money out, counts as spending (Paid, or Pending from a repeat)
-//   income    money in, counts as income (Received, or Pending)
-//   transfer  money moved between your own accounts: never income or spending
-//   iowe      I owe. kind "bill": spending on the day it's marked paid.
-//             kind "borrowed": money came in when borrowed, goes out when
-//             repaid, and neither counts as income or spending.
-//   owed      Owed to me. kind "lent" (also used for splits): money went out
-//             when lent, comes back when repaid, never income or spending.
-//             kind "work": income on the day it arrives.
+//   expense   Cash out. Paid, or Upcoming (status "pending") until you mark it paid.
+//   income    Cash in. Received, or Upcoming until you mark it received.
+//   transfer  Move: money between your own accounts, never cash in or out.
+//   iowe      People, "I borrowed": money came in when borrowed, goes out when
+//             repaid, and neither counts as cash in or out.
+//   owed      People, "I lent" (also splits): money went out when lent, comes
+//             back when repaid, never cash in or out.
+// Upcoming counts for nothing until it's marked paid. Bills and payment for
+// work from before 1.2 (iowe "bill", owed "work") turn into Cash out and
+// Cash in by themselves: see upgradeRecords.
 // Every amount is stored in its own currency with the rate to the home
 // currency saved on the record, so old totals never change with today's rate.
 import { round2 } from './money';
@@ -17,9 +18,10 @@ import { addDays, inRange, monthKeys, lastDayOfMonth, periodOf, today as todayYm
 import { nextDates } from './repeats';
 
 export const TYPES = ['expense', 'income', 'iowe', 'owed', 'transfer'];
-export const TYPE_LABEL = { expense: 'Expense', income: 'Income', iowe: 'I owe', owed: 'Owed to me', transfer: 'Transfer' };
+export function isMoneyType(t) { return t === 'expense' || t === 'income' || t === 'transfer'; }
+export const TYPE_LABEL = { expense: 'Cash out', income: 'Cash in', iowe: 'I borrowed', owed: 'I lent', transfer: 'Move' };
 export const KIND_LABEL = { bill: 'Bill', borrowed: 'Borrowed money', lent: 'Lent or split', work: 'Payment for work' };
-export const STATUS_LABEL = { paid: 'Paid', received: 'Received', pending: 'Pending', scheduled: 'Scheduled', open: 'Open', settled: 'Settled', skipped: 'Skipped' };
+export const STATUS_LABEL = { paid: 'Paid', received: 'Received', pending: 'Upcoming', scheduled: 'Upcoming', open: 'Open', settled: 'Settled', skipped: 'Skipped' };
 
 export const live = (coll) => Object.values(coll || {}).filter((x) => x && !x.deleted);
 export const liveRecords = (data) => live(data.records);
@@ -28,11 +30,11 @@ export const homeOf = (r) => round2((Number(r.amount) || 0) * (Number(r.rate) ||
 export const defaultKind = (type) => (type === 'iowe' ? 'bill' : type === 'owed' ? 'lent' : null);
 export const kindOf = (r) => r.kind || defaultKind(r.type);
 export const isOpen = (r) => (r.type === 'iowe' || r.type === 'owed') && r.status !== 'settled' && !r.deleted && r.status !== 'skipped';
-export const isPending = (r) => r.status === 'pending' && !r.deleted;
-// Dated in the future: shows under Coming up and counts for nothing until its day.
+// Upcoming: not paid yet, so it counts for nothing until you mark it paid.
+export const isPending = (r) => (r.status === 'pending' || r.status === 'scheduled') && !r.deleted && isMoneyType(r.type);
+export const isUpcoming = isPending;
 export const isScheduled = (r) => r.status === 'scheduled' && !r.deleted;
 const waiting = (r) => r.status === 'pending' || r.status === 'scheduled';
-export const isMoneyType = (t) => t === 'expense' || t === 'income' || t === 'transfer';
 
 // What to call a record: its name, or its category when it has none.
 export function displayName(r, data) {
@@ -47,6 +49,7 @@ export function displayName(r, data) {
 // Status shown for a record, including Overdue for open debts past their date.
 export function statusOf(r, now = todayYmd()) {
   if (isOpen(r)) return r.dueDate && r.dueDate < now ? 'Overdue' : 'Open';
+  if (isPending(r)) return r.date < now ? 'Overdue' : 'Upcoming';
   return STATUS_LABEL[r.status] || '';
 }
 
@@ -173,10 +176,10 @@ export function byNewest(a, b) {
   return (b.createdAt || 0) - (a.createdAt || 0);
 }
 
-// Paid and received things only: open bills and pending repeats wait in Coming up.
+// Paid and received things only: Upcoming waits in the Upcoming tab.
 export function recentRecords(data, n = 4) {
   return liveRecords(data)
-    .filter((r) => flowsOf(r).length && r.status !== 'pending')
+    .filter((r) => flowsOf(r).length && !isPending(r))
     .sort(byNewest)
     .slice(0, n);
 }
@@ -188,7 +191,7 @@ export function filterRecords(data, { from, to, type = 'all', categoryId, accoun
   return liveRecords(data)
     .filter((r) => {
       if (r.status === 'skipped') return false;
-      if (type !== 'all' && r.type !== type) return false;
+      if (type === 'people') { if (r.type !== 'iowe' && r.type !== 'owed') return false; } else if (type === 'upcoming') { if (!isPending(r)) return false; } else if (type !== 'all' && r.type !== type) return false;
       if (!transfers && r.type === 'transfer') return false;
       if (categoryId && r.categoryId !== categoryId) return false;
       if (accountId && r.accountId !== accountId && r.toAccountId !== accountId && r.settledAccountId !== accountId) return false;
@@ -203,21 +206,23 @@ export function filterRecords(data, { from, to, type = 'all', categoryId, accoun
     .sort(byNewest);
 }
 
-/* ------------------------------ Coming up ------------------------------ */
+/* ------------------------------ Upcoming ------------------------------ */
 
-// Open debts (overdue first), pending repeats, and the next dates of repeats
-// that haven't been made yet, within `days`.
-export function comingUp(data, { days = 14, now = todayYmd() } = {}) {
+// Everything not paid yet, soonest first: Upcoming records (overdue ones
+// too, however old), the next dates of repeats that haven't been made yet
+// (within `days`), and People who still owe or are owed.
+// kind: 'upcoming' (a record) | 'repeat' (a date a repeat will make) |
+//       'owedToMe' | 'due' (People).
+export function comingUp(data, { days = 14, now = todayYmd(), people = true } = {}) {
   const until = addDays(now, days);
   const items = [];
   liveRecords(data).forEach((r) => {
     if (isOpen(r)) {
+      if (!people) return;
       const d = r.dueDate || r.date;
-      if (d <= until) items.push({ key: r.id, date: d, record: r, kind: r.type === 'iowe' ? 'due' : 'owedToMe' });
-    } else if (isPending(r)) {
-      items.push({ key: r.id, date: r.date, record: r, kind: 'pending' });
-    } else if (isScheduled(r) && r.date <= until) {
-      items.push({ key: r.id, date: r.date, record: r, kind: 'scheduled' });
+      if (d <= until || !r.dueDate) items.push({ key: r.id, date: d, record: r, kind: r.type === 'iowe' ? 'due' : 'owedToMe' });
+    } else if (isPending(r) && r.date <= until) {
+      items.push({ key: r.id, date: r.date, record: r, kind: 'upcoming' });
     }
   });
   live(data.repeats).forEach((rep) => {
@@ -229,6 +234,113 @@ export function comingUp(data, { days = 14, now = todayYmd() } = {}) {
     });
   });
   return items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+// The record or repeat template behind an Upcoming item.
+export const itemRecord = (it) => it.record || (it.repeat && it.repeat.template) || {};
+
+// What an Upcoming item will do to the balance once paid: minus for cash
+// out, plus for cash in, nothing for moves and People.
+export function itemEffect(it) {
+  if (it.kind !== 'upcoming' && it.kind !== 'repeat') return 0;
+  const r = itemRecord(it);
+  const home = round2((Number(r.amount) || 0) * (Number(r.rate) || 1));
+  if (r.type === 'income' || (r.type === 'owed' && kindOf(r) === 'work')) return home;
+  if (r.type === 'expense' || (r.type === 'iowe' && kindOf(r) === 'bill')) return -home;
+  return 0;
+}
+
+// Upcoming money up to a date (overdue included), and what the balance
+// will be once it's all paid: { items, total, out, in, count }.
+export function upcomingUntil(data, until, now = todayYmd()) {
+  const days = Math.max(0, Math.round((Date.parse(until) - Date.parse(now)) / 86400000));
+  const items = comingUp(data, { days, now, people: false }).filter((it) => it.date <= until && itemEffect(it) !== 0);
+  let total = 0;
+  let outSum = 0;
+  let inSum = 0;
+  items.forEach((it) => { const e = itemEffect(it); total += e; if (e < 0) outSum -= e; else inSum += e; });
+  return { items, total: round2(total), out: round2(outSum), in: round2(inSum), count: items.length };
+}
+
+// Upcoming records whose day has come (or gone): Home asks about these.
+export function dueToAsk(data, now = todayYmd()) {
+  return liveRecords(data).filter((r) => isPending(r) && r.date <= now).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt || 0) - (b.createdAt || 0)));
+}
+
+// "Rent 280.00", "Rent and Phone (310.00)", "3 payments (840.00)"
+export function upcomingWords(up, data, money) {
+  if (!up.count) return '';
+  const names = [...new Set(up.items.map((it) => displayName(itemRecord(it), data)))];
+  const sum = money(up.out + up.in);
+  if (up.count === 1) return `${names[0]} ${sum}`;
+  if (names.length === 1) return `${up.count} × ${names[0]} (${sum})`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} (${sum})`;
+  return `${up.count} payments (${sum})`;
+}
+
+/* --------------------------- Older data (1.2) --------------------------- */
+
+// Brings records from older versions into the 1.2 model. Safe to run any
+// number of times: it only touches records that still use the old shapes.
+//   scheduled          -> Upcoming
+//   I owe, bill        -> Cash out (paid on the day it was settled, or Upcoming)
+//   Owed to me, work   -> Cash in  (received on the day it arrived, or Upcoming)
+// Repeats that made bills make Cash out from now on.
+export function upgradeRecords(data) {
+  const t = Date.now();
+  const records = {};
+  const repeats = {};
+  liveRecords(data).forEach((r) => {
+    if (r.status === 'scheduled') { records[r.id] = { ...r, status: 'pending', updatedAt: t }; return; }
+    const k = kindOf(r);
+    if ((r.type === 'iowe' && k === 'bill') || (r.type === 'owed' && k === 'work')) {
+      const income = r.type === 'owed';
+      const settled = r.status === 'settled';
+      const skipped = r.status === 'skipped';
+      records[r.id] = {
+        ...r,
+        type: income ? 'income' : 'expense',
+        kind: null,
+        status: skipped ? 'skipped' : settled ? (income ? 'received' : 'paid') : 'pending',
+        date: settled ? r.settledDate || r.date : r.dueDate || r.date,
+        accountId: settled ? r.settledAccountId || r.accountId : r.accountId,
+        dueDate: null,
+        settledDate: null,
+        settledAccountId: null,
+        updatedAt: t,
+      };
+    }
+  });
+  live(data.repeats).forEach((rep) => {
+    const tp = rep.template || {};
+    const k = tp.kind || defaultKind(tp.type);
+    if ((tp.type === 'iowe' && k === 'bill') || (tp.type === 'owed' && k === 'work')) {
+      repeats[rep.id] = { ...rep, template: { ...tp, type: tp.type === 'owed' ? 'income' : 'expense', kind: null }, updatedAt: t };
+    }
+  });
+  return Object.keys(records).length || Object.keys(repeats).length ? { records, repeats } : null;
+}
+
+// Once, when 1.2 first opens: Cash out and Cash in that 1.0.1 counted by
+// itself on their day (a future-dated record, or a repeat that didn't ask)
+// go back to Upcoming if they're from the last 7 days, so Home can ask.
+export function unpayAutoCounted(data, now = todayYmd()) {
+  const since = addDays(now, -7);
+  const out = {};
+  liveRecords(data).forEach((r) => {
+    if (r.type !== 'expense' && r.type !== 'income') return;
+    if (r.status !== 'paid' && r.status !== 'received') return;
+    if (r.date < since || r.date > now || r.imported) return;
+    const made = r.createdAt ? new Date(r.createdAt) : null;
+    const madeDay = made ? `${made.getFullYear()}-${String(made.getMonth() + 1).padStart(2, '0')}-${String(made.getDate()).padStart(2, '0')}` : null;
+    const rep = r.repeatId ? (data.repeats || {})[r.repeatId] : null;
+    // A repeat that asked first left it Pending, so paid means you said yes.
+    if (r.confirmedAt || (rep && rep.confirm)) return;
+    const fromRepeat = rep && r.id === `rep_${rep.id}_${r.date}` && r.date > rep.start;
+    const madeAhead = madeDay && madeDay < r.date;
+    if (fromRepeat || madeAhead) out[r.id] = { ...r, status: 'pending', updatedAt: Date.now() };
+  });
+  return Object.keys(out).length ? out : null;
 }
 
 /* ------------------------------ Budgets ------------------------------ */
@@ -250,12 +362,11 @@ export function budgetStatus(data, budget, { now = todayYmd(), flows = allFlows(
   let plannedCount = 0;
   liveRecords(data).forEach((r) => {
     if (r.categoryId !== budget.categoryId) return;
-    if (r.type === 'iowe' && kindOf(r) === 'bill' && isOpen(r) && inRange(r.dueDate || r.date, from, to)) { planned += homeOf(r); plannedCount += 1; }
-    if (r.type === 'expense' && (isPending(r) || isScheduled(r)) && inRange(r.date, from, to)) { planned += homeOf(r); plannedCount += 1; }
+    if (r.type === 'expense' && isPending(r) && inRange(r.date, from, to)) { planned += homeOf(r); plannedCount += 1; }
   });
   live(data.repeats).forEach((rep) => {
     const t = rep.template || {};
-    if (rep.paused || t.categoryId !== budget.categoryId || (t.type !== 'expense' && t.type !== 'iowe')) return;
+    if (rep.paused || t.categoryId !== budget.categoryId || t.type !== 'expense') return;
     nextDates(rep, addDays(now, 1), to).forEach((d) => {
       if (data.records && data.records[`rep_${rep.id}_${d}`]) return;
       planned += round2((Number(t.amount) || 0) * (Number(t.rate) || 1));
@@ -383,15 +494,59 @@ export function otherMoves(from, to, flows) {
   return round2(sum);
 }
 
-// Scheduled records whose day has come: they become paid or received, or
-// Pending when their repeat asks to confirm. Returns changed records or null.
-export function wakeScheduled(data, now = todayYmd()) {
-  const out = {};
-  liveRecords(data).forEach((r) => {
-    if (r.status !== 'scheduled' || r.date > now) return;
-    const rep = r.repeatId ? (data.repeats || {})[r.repeatId] : null;
-    const status = rep && !rep.deleted && rep.confirm ? 'pending' : r.type === 'income' ? 'received' : 'paid';
-    out[r.id] = { ...r, status, updatedAt: Date.now() };
+/* --------------------------- The balance line --------------------------- */
+
+// Day by day balance for the line on Home, for all accounts or just one.
+// pts: one per day from `from` to `now`, each with what happened that day.
+// fut: the drops still to come up to `until`, from Upcoming (overdue ones
+// land just after today). Opening balances count on their own day.
+export function balanceLine(data, { flows = allFlows(data), from, now, until, accountId = null } = {}) {
+  const accs = live(data.accounts).filter((a) => !accountId || a.id === accountId);
+  const ids = new Set(accs.map((a) => a.id));
+  const cats = data.categories || {};
+  const start = round2(accs.reduce((t, a) => t + accountBalance(data, a, { flows, upTo: addDays(from, -1) }).home, 0));
+  const byDay = {};
+  flows.forEach((f) => {
+    if (!ids.has(f.accountId) || f.date < from || f.date > now) return;
+    const r = f.record;
+    // Moves between two accounts you're looking at cancel out: leave them off.
+    if (r.type === 'transfer' && !accountId && ids.has(r.accountId) && ids.has(r.toAccountId)) return;
+    const d = (byDay[f.date] = byDay[f.date] || { total: 0, ev: [] });
+    d.total += f.home;
+    const c = cats[r.categoryId];
+    d.ev.push({ emoji: r.type === 'transfer' ? '🔀' : c && !c.deleted ? c.emoji : '🏷️', name: displayName(r, data) || 'Record', amount: round2(f.home) });
   });
-  return Object.keys(out).length ? out : null;
+  // An opening balance set inside the stretch counts from its start: it's
+  // money you already had, not a jump, and not part of "this month".
+  const opened = accs.reduce((t, a) => t + (a.openingDate && a.openingDate >= from && a.openingDate <= now ? openingHome(a) : 0), 0);
+  const pts = [];
+  let v = start + opened;
+  for (let d = from; d <= now; d = addDays(d, 1)) {
+    if (byDay[d]) v += byDay[d].total;
+    pts.push({ date: d, v: round2(v), ev: byDay[d] ? byDay[d].ev : [] });
+    if (pts.length > 800) break;
+  }
+  const fut = [{ date: now, v: round2(v) }];
+  if (until && until >= now) {
+    const up = upcomingUntil(data, until, now);
+    let f = v;
+    up.items.forEach((it) => {
+      const r = itemRecord(it);
+      if (accountId && r.accountId !== accountId && r.toAccountId !== accountId) return;
+      const e = r.type === 'transfer' && accountId ? (r.accountId === accountId ? -1 : 1) * (Number(r.amount) || 0) : itemEffect(it);
+      if (!e) return;
+      const c = cats[r.categoryId];
+      const at = it.date < now ? now : it.date;
+      fut.push({ date: at, v: round2(f) });
+      f += e;
+      fut.push({ date: at, v: round2(f), pin: c && !c.deleted ? c.emoji : '🔁', color: c ? c.color : null, amount: round2(e), name: displayName(r, data), late: it.date < now, due: it.date });
+    });
+    fut.push({ date: until, v: round2(f) });
+  }
+  return { pts, fut, start: round2(start + opened), now: round2(v), end: fut[fut.length - 1].v };
+}
+
+// Days from a to b (b later is positive).
+export function daysUntil(a, b) {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
 }

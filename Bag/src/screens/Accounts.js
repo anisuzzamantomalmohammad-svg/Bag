@@ -4,7 +4,10 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Balance, Button, Card, Row, Screen, T, useTheme } from '../ui/kit';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { Balance, Bubble, Button, Card, Row, Screen, Squish, T, useTheme } from '../ui/kit';
+import { accountColor, accountEmoji, accountKind } from '../lib/look';
+import { ACCOUNT_KINDS } from '../data/defaults';
 import { IconButton } from '../ui/parts';
 import { accountBalance, balanceAtMonthEnds, live, netWorth } from '../lib/ledger';
 import { addMonths, lastDayOfMonth, monthLabel, today } from '../lib/dates';
@@ -38,26 +41,39 @@ export default function Accounts() {
         {showWorth ? (
           <View style={{ marginTop: 8 }}>
             <Row first minHeight={44} label="Accounts" value={app.money(nw.accounts)} />
-            <Row minHeight={44} label="Owed to me" value={`+ ${app.money(nw.owedToMe)}`} onPress={() => nav.setTab('Owed')} />
-            <Row minHeight={44} label="I owe" value={`${app.money(-nw.iOwe)}`} onPress={() => nav.setTab('Owed')} />
+            <Row minHeight={44} label="Owed to me" value={`+ ${app.money(nw.owedToMe)}`} onPress={() => nav.setTab('Upcoming', { filter: 'people' })} />
+            <Row minHeight={44} label="I borrowed" value={`${app.money(-nw.iOwe)}`} onPress={() => nav.setTab('Upcoming', { filter: 'people' })} />
             <Row minHeight={48} label={<T weight="semi">Net worth</T>} value={<Balance value={nw.total} size={16} />} />
           </View>
         ) : null}
       </Card>
 
-      {rows.length ? (
-        <Card pad={0} style={{ paddingHorizontal: 16 }}>
-          {rows.map(({ a, bal }, i) => {
-            const foreign = a.currency && a.currency !== home;
-            return (
-              <Row key={a.id} first={i === 0} minHeight={62} label={a.name}
-                sub={foreign ? `${currencyName(a.currency)} · ≈ ${app.money(bal.home)} ${home}` : undefined}
-                value={<T weight="medium" color={bal.native < 0 ? th.out : th.ink}>{app.money(bal.native, { currency: a.currency })}</T>}
-                onPress={() => nav.push('account', { id: a.id })} />
-            );
-          })}
-        </Card>
-      ) : (
+      {rows.length ? rows.map(({ a, bal }) => {
+        const foreign = a.currency && a.currency !== home;
+        const col = accountColor(a);
+        const share = total > 0 && bal.home > 0 ? bal.home / total : 0;
+        return (
+          <Squish key={a.id} onPress={() => nav.push('account', { id: a.id })} accessibilityLabel={`${a.name}, ${app.money(bal.native, { currency: a.currency })}`} style={{ borderRadius: 24, overflow: 'hidden', backgroundColor: th.card, padding: 18 }}>
+            <Svg style={{ position: 'absolute', top: 0, left: 0 }} width="100%" height="100%" pointerEvents="none">
+              <Defs><LinearGradient id={`ac${a.id}`} x1="0" y1="0" x2="1" y2="1"><Stop offset="0" stopColor={col} stopOpacity={0.24} /><Stop offset="1" stopColor={col} stopOpacity={0.03} /></LinearGradient></Defs>
+              <Rect x="0" y="0" width="100%" height="100%" fill={`url(#ac${a.id})`} />
+            </Svg>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Bubble emoji={accountEmoji(a)} color={col} size={44} />
+              <View style={{ flex: 1 }}>
+                <T size={16} weight="semi">{a.name}</T>
+                {ACCOUNT_KINDS[accountKind(a)].label !== a.name || foreign ? <T size={12.5} color={th.faint}>{[ACCOUNT_KINDS[accountKind(a)].label !== a.name ? ACCOUNT_KINDS[accountKind(a)].label : null, foreign ? currencyName(a.currency) : null].filter(Boolean).join(' · ')}</T> : null}
+              </View>
+            </View>
+            <T serif size={32} color={bal.native < 0 ? th.out : th.ink} style={{ marginTop: 14 }}>{app.money(bal.native, { currency: a.currency })}</T>
+            {foreign ? <T size={13} color={th.faint}>≈ {app.money(bal.home)} {home}</T> : null}
+            <View style={{ height: 5, borderRadius: 3, backgroundColor: th.soft, marginTop: 12, overflow: 'hidden' }}>
+              <View style={{ width: `${Math.round(share * 100)}%`, height: 5, borderRadius: 3, backgroundColor: col }} />
+            </View>
+            <T size={11.5} color={th.faint} style={{ marginTop: 5 }}>{Math.round(share * 100)}% of all your money</T>
+          </Squish>
+        );
+      }) : (
         <Card><T color={th.muted}>No accounts yet. Add one for cash, your bank, or savings.</T></Card>
       )}
 

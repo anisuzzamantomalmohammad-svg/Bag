@@ -1,26 +1,52 @@
-// Add or edit a record. One form for all five types: the type chips decide
-// which fields show, so options sit inside each other instead of all at once.
-import React, { useMemo, useRef, useState } from 'react';
-import { Alert, Image, Pressable, TextInput, View } from 'react-native';
+// Add or edit a record. Four kinds: Cash out, Cash in, Move, People. The
+// chips decide which fields show. A later date, or "Not paid yet", makes it
+// Upcoming: it counts for nothing until you mark it paid.
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, Image, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import Svg, { Defs, Ellipse, RadialGradient, Stop } from 'react-native-svg';
+import * as Haptics from 'expo-haptics';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, Chip, Chips, F, Field, Row, Screen, Seg, T, Toggle, useTheme } from '../ui/kit';
-import { descriptionSuggestions, splitNameAmount, live, nameSuggestions, peopleSuggestions } from '../lib/ledger';
+import { Bubble, Button, Card, Chip, Chips, F, Field, Icon, Row, Screen, Seg, Squish, T, Toggle, useTheme } from '../ui/kit';
+import { accountColor, accountEmoji, alpha, catColor } from '../lib/look';
+import { accountBalance, descriptionSuggestions, isPending, splitNameAmount, live, nameSuggestions, peopleSuggestions } from '../lib/ledger';
 import { fmtShort, today } from '../lib/dates';
 import { fmt, parseAmount, round2 } from '../lib/money';
 import { describe, presetRule } from '../lib/repeats';
 import { savedRate } from '../lib/rates';
 import { pickPhoto } from '../lib/photos';
+import { keyIn } from '../lib/keypad';
 
-const TYPES = [['expense', 'Expense'], ['income', 'Income'], ['iowe', 'I owe'], ['owed', 'Owed to me'], ['transfer', 'Transfer']];
-const KINDS = { iowe: [['bill', 'Bill'], ['borrowed', 'Borrowed money']], owed: [['lent', 'Lent or split'], ['work', 'Payment for work']] };
-const KIND_HINT = {
-  bill: 'Counts as spending when you mark it paid',
-  borrowed: 'Not income, and paying it back is not spending',
-  lent: 'Getting it back is not income',
-  work: 'Counts as income when it arrives',
+const TYPES = [['expense', 'Out'], ['income', 'In'], ['transfer', 'Move'], ['people', 'People']];
+const PEOPLE_COLOR = '#B79CF0';
+const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'];
+
+function Key({ k, onPress, th }) {
+  return (
+    <Squish onPress={() => onPress(k)} accessibilityLabel={k === 'del' ? 'Delete' : k === '.' ? 'Point' : k} style={{ height: 50, borderRadius: 18, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center' }}>
+      {k === 'del' ? <Icon name="delete" size={20} color={th.ink} /> : <T size={22}>{k}</T>}
+    </Squish>
+  );
+}
+
+function AccButton({ a, label, on, onPress, app, th, flex = 1 }) {
+  const bal = a ? accountBalance(app.data, a, { flows: app.flows, homePerUnit: app.homePerUnit }) : null;
+  const col = a ? accountColor(a) : th.faint;
+  return (
+    <Squish onPress={onPress} accessibilityLabel={`${label ? `${label} ` : ''}${a ? a.name : 'Choose account'}`} style={{ flex, minHeight: 52, borderRadius: 16, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: on ? alpha(col, 0.16) : th.soft, borderWidth: 1.5, borderColor: on ? col : 'transparent' }}>
+      <T size={18}>{a ? accountEmoji(a) : '＋'}</T>
+      <View style={{ flex: 1 }}>
+        <T size={13.5} weight="medium" numberOfLines={1}>{label ? `${label} ` : ''}{a ? a.name : 'Choose'}</T>
+        {bal ? <T size={11.5} color={bal.native < 0 ? th.out : th.faint}>{app.money(bal.native, { currency: a.currency })}</T> : null}
+      </View>
+    </Squish>
+  );
+}
+const PEOPLE = [{ id: 'owed', label: 'I lent' }, { id: 'iowe', label: 'I borrowed' }];
+const PEOPLE_HINT = {
+  owed: 'Not cash out, and getting it back is not cash in',
+  iowe: 'Not cash in, and paying it back is not cash out',
 };
-const ACCOUNT_LABEL = { expense: 'Account', income: 'Into', bill: 'Pay from', borrowed: 'Into', lent: 'From', work: 'Into' };
 
 function presetOf(rep) {
   if (!rep) return 'never';
@@ -30,7 +56,7 @@ function presetOf(rep) {
   return 'custom';
 }
 
-export default function AddRecord({ id, type: startType, prefill }) {
+export default function AddRecord({ id, type: startType, prefill, upcoming: startUpcoming }) {
   const app = useApp();
   const nav = useNav();
   const th = useTheme();
@@ -46,7 +72,6 @@ export default function AddRecord({ id, type: startType, prefill }) {
   };
 
   const [type, setType] = useState(init.type);
-  const [kind, setKind] = useState(init.kind || (init.type === 'iowe' ? 'bill' : 'lent'));
   const [amount, setAmount] = useState(init.amount ? String(init.amount) : '');
   const [currency, setCurrency] = useState(init.currency || home);
   const [name, setName] = useState(init.name || '');
@@ -60,6 +85,8 @@ export default function AddRecord({ id, type: startType, prefill }) {
   const [description, setDescription] = useState(init.description || '');
   const [rateText, setRateText] = useState(old && old.rateManual ? String(old.rate) : '');
   const [preset, setPreset] = useState(presetOf(oldRep));
+  // Not paid yet: waits in Upcoming even though its date has come.
+  const [notPaid, setNotPaid] = useState(old ? isPending(old) : !!startUpcoming);
   const [customRule, setCustomRule] = useState(oldRep ? { freq: oldRep.freq, every: oldRep.every, weekdays: oldRep.weekdays, monthDay: oldRep.monthDay, end: oldRep.end, amountMode: oldRep.amountMode, confirm: oldRep.confirm } : null);
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [split, setSplit] = useState(false);
@@ -81,8 +108,11 @@ export default function AddRecord({ id, type: startType, prefill }) {
   const touch = (fn) => (v) => { dirty.current = true; setErrors({}); fn(v); };
 
   const isDebt = type === 'iowe' || type === 'owed';
-  const subKind = isDebt ? kind : type;
-  const catKind = type === 'income' || (type === 'owed' && kind === 'work') ? 'income' : 'expense';
+  const kind = type === 'iowe' ? 'borrowed' : 'lent';
+  const isMoney = !isDebt;
+  const future = date > today();
+  const willWait = isMoney && (future || notPaid);
+  const catKind = type === 'income' ? 'income' : 'expense';
   const cat = categoryId ? data.categories[categoryId] : null;
   const acc = accountId ? data.accounts[accountId] : null;
   const toAcc = toAccountId ? data.accounts[toAccountId] : null;
@@ -132,16 +162,18 @@ export default function AddRecord({ id, type: startType, prefill }) {
   const changeType = (t) => {
     dirty.current = true;
     setErrors({});
-    setType(t);
+    const next = t === 'people' ? (isDebt ? type : 'owed') : t;
+    setType(next);
     setSplit(false);
-    if (t === 'iowe') setKind('bill');
-    if (t === 'owed') setKind('lent');
-    if (cat && cat.kind !== (t === 'income' ? 'income' : 'expense')) setCategoryId(null);
+    // Bank and Cash: a move goes from the one you picked to the other one.
+    if (next === 'transfer' && !toAccountId) { const other = accounts.find((x) => x.id !== accountId); if (other) setToAccountId(other.id); }
+    if (next !== 'transfer' && !accountId) setAccountId(toAccountId || defAcc);
+    if (cat && cat.kind !== (next === 'income' ? 'income' : 'expense')) setCategoryId(null);
   };
 
   const rule = () => {
     if (preset === 'never') return old && old.repeatId ? null : undefined;
-    const base = { confirm: type === 'expense' || type === 'income' || type === 'transfer', amountMode: 'same', end: { type: 'never' } };
+    const base = { confirm: isMoney, amountMode: 'same', end: { type: 'never' } };
     if (preset === 'custom') return { ...base, ...(customRule || presetRule('monthly', date)) };
     return { ...base, ...(oldRep ? { confirm: oldRep.confirm, amountMode: oldRep.amountMode, end: oldRep.end } : {}), ...presetRule(preset, isDebt ? dueDate : date) };
   };
@@ -154,9 +186,9 @@ export default function AddRecord({ id, type: startType, prefill }) {
     if (type === 'transfer') {
       if (!accountId || !toAccountId) e.account = 'Pick both accounts';
       else if (accountId === toAccountId) e.account = 'Pick two different accounts';
-    } else if (!categoryId) e.category = 'Pick a category';
+    } else if (!categoryId && !isDebt) e.category = 'Pick a category';
     if (!accountId && type !== 'transfer') e.account = 'Add an account first';
-    if (isDebt && type === 'owed' && !who.trim()) e.who = 'Who owes you?';
+    if (isDebt && !who.trim()) e.who = type === 'owed' ? 'Who did you lend it to?' : 'Who did you borrow from?';
     if (split && !(share > 0 && share < amtUse)) e.split = 'Their share has to be less than the total';
     if (split && !splitWho.trim()) e.split = 'Who are you splitting with?';
     if (foreign && rateText && !(rate > 0)) e.rate = 'Enter a rate like 1.79';
@@ -170,6 +202,7 @@ export default function AddRecord({ id, type: startType, prefill }) {
       toCurrency: type === 'transfer' && toAcc ? toAcc.currency : null,
       who: isDebt ? who.trim() : '', dueDate: isDebt ? dueDate : null, description: description.trim(),
       rateManual: foreign && !!rateText, rate: foreign ? rate || 1 : 1,
+      upcoming: isMoney ? willWait : undefined,
     };
     const savedId = app.saveRecord(draft, { repeat: rule(), split: split ? { who: splitWho.trim(), share } : undefined });
     if (!old) app.update({ addMore: !!(preset !== 'never' || split || description.trim() || photos.length) });
@@ -177,7 +210,7 @@ export default function AddRecord({ id, type: startType, prefill }) {
       photos.filter((u) => !savedPhotos.includes(u)).forEach((u) => app.addPhoto(savedId, u));
       savedPhotos.filter((u) => !photos.includes(u)).forEach((u) => app.removePhoto(savedId, u));
     }
-    app.showToast(old ? 'Saved' : type === 'expense' && split ? `Saved. ${splitWho.trim()} owes you ${app.money(share)}` : 'Saved');
+    app.showToast(willWait ? `In Upcoming. Not counted until it's paid.` : old ? 'Saved' : type === 'expense' && split ? `Saved. ${splitWho.trim()} owes you ${app.money(share)}` : 'Saved');
     nav.pop();
   };
 
@@ -189,47 +222,76 @@ export default function AddRecord({ id, type: startType, prefill }) {
   const pickAccount = (setter, title) => nav.openSheet('account', { title, onPick: (aid) => { dirty.current = true; setErrors({}); setter(aid); if (setter === setAccountId && data.accounts[aid] && data.accounts[aid].currency && !old) setCurrency(data.accounts[aid].currency); } });
   const repeatLabel = preset === 'never' ? 'Never' : preset === 'custom' ? describe({ ...(customRule || {}), start: isDebt ? dueDate : date }) : preset[0].toUpperCase() + preset.slice(1);
 
+  const kindColor = type === 'income' ? th.in : type === 'transfer' ? th.chipOn : isDebt ? PEOPLE_COLOR : th.out;
+  const onColor = th.mode === 'dark' ? '#0E131A' : '#FFFFFF';
+  const bump = useRef(new Animated.Value(1)).current;
+  const shake = useRef(new Animated.Value(0)).current;
+  const motion = data.animations !== false;
+  const press = (k) => {
+    dirty.current = true;
+    setErrors({});
+    setAmount((cur) => keyIn(cur, k));
+    if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {});
+    if (motion) { bump.setValue(1.08); Animated.spring(bump, { toValue: 1, friction: 4, useNativeDriver: Platform.OS !== 'web' }).start(); }
+  };
+  useEffect(() => {
+    if (!errors.amount || !motion) return;
+    shake.setValue(0);
+    Animated.sequence([-8, 8, -5, 0].map((v) => Animated.timing(shake, { toValue: v, duration: 60, useNativeDriver: Platform.OS !== 'web' }))).start();
+  }, [errors.amount]);
+  // Your usual places, one tap away before you type a name.
+  const usual = useMemo(() => (type === 'transfer' || isDebt || name ? [] : nameSuggestions(data, '', type).slice(0, 3)), [type, name]);
+  const live2 = accounts.slice().sort((x, y) => (x.order || 0) - (y.order || 0));
+  const pickAcc = (aid) => { dirty.current = true; setErrors({}); setAccountId(aid); if (data.accounts[aid] && data.accounts[aid].currency && !old) setCurrency(data.accounts[aid].currency); };
+  const accLabel = type === 'income' || type === 'iowe' ? 'Into' : type === 'owed' ? 'From' : 'Paid from';
+  const swap = () => { if (!accountId || !toAccountId) return; dirty.current = true; const f = accountId; setAccountId(toAccountId); setToAccountId(f); };
+  const datePill = date === today() ? 'Today' : fmtShort(date, { weekday: true });
+  const pill = { minHeight: 38, paddingHorizontal: 12, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: th.soft };
+
   return (
     <Screen
       title={old ? 'Edit record' : 'New record'}
       back="close"
       onBack={close}
-      footer={<Button label="Save" onPress={save} />}
+      footer={<Button label={willWait && !(old && isPending(old)) ? 'Save as Upcoming' : 'Save'} onPress={save} />}
     >
-      <Chips>
-        {TYPES.map(([t, l]) => <Chip key={t} label={l} on={type === t} onPress={() => changeType(t)} />)}
-      </Chips>
+      <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center' }}>
+        {TYPES.map(([t, l]) => {
+          const on = t === 'people' ? isDebt : type === t;
+          return (
+            <Squish key={t} onPress={() => changeType(t)} accessibilityRole="tab" accessibilityLabel={l} style={{ height: 36, paddingHorizontal: 16, borderRadius: 12, justifyContent: 'center', backgroundColor: on ? kindColor : th.soft, transform: [{ scale: on ? 1.05 : 1 }] }}>
+              <T size={13.5} weight={on ? 'semi' : 'medium'} color={on ? onColor : th.muted}>{l}</T>
+            </Squish>
+          );
+        })}
+      </View>
 
       {isDebt ? (
         <View>
-          <Seg items={KINDS[type].map(([k, l]) => ({ id: k, label: l }))} value={kind} onChange={touch(setKind)} />
-          <T size={13} color={th.faint} center style={{ marginTop: 8 }}>{KIND_HINT[kind]}</T>
+          <Seg items={PEOPLE} value={type} onChange={touch(setType)} />
+          <T size={13} color={th.faint} center style={{ marginTop: 8 }}>{PEOPLE_HINT[type]}</T>
         </View>
       ) : null}
 
-      <View style={{ alignItems: 'center', paddingTop: 4 }}>
-        <T size={13} color={th.muted}>Amount</T>
-        <TextInput
-          value={amount}
-          onChangeText={touch(setAmount)}
-          keyboardType="decimal-pad"
-          placeholder={offer ? offer.amount : '0.00'}
-          placeholderTextColor={th.faint2}
-          accessibilityLabel="Amount"
-          autoFocus={!old}
-          style={{ fontFamily: F.semi, fontSize: 46 * (th.textScale || 1), color: th.ink, textAlign: 'center', minWidth: 200, paddingVertical: 2 }}
-        />
-        <Pressable onPress={() => nav.openSheet('currency', { onPick: (c) => { dirty.current = true; setCurrency(c); setRateText(''); } })} accessibilityRole="button" accessibilityLabel={`Currency ${currency}`} style={{ minHeight: 36, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: th.lineStrong, backgroundColor: th.card, justifyContent: 'center' }}>
-          <T size={13} weight="semi" color={th.muted}>{currency} ▾</T>
+      <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 2 }}>
+        <Svg width={260} height={170} style={{ position: 'absolute', top: -14 }} pointerEvents="none">
+          <Defs><RadialGradient id="glow" cx="50%" cy="50%" r="50%"><Stop offset="0" stopColor={kindColor} stopOpacity={0.3} /><Stop offset="1" stopColor={kindColor} stopOpacity={0} /></RadialGradient></Defs>
+          <Ellipse cx={130} cy={85} rx={130} ry={85} fill="url(#glow)" />
+        </Svg>
+        <Animated.View style={{ transform: [{ scale: bump }, { translateX: shake }] }}>
+          <T serif size={58} accessibilityLabel={`Amount ${amount || 0}`} color={amount ? th.ink : th.faint2} style={{ lineHeight: 66 }}>{amount || (offer ? offer.amount : '0')}</T>
+        </Animated.View>
+        <Pressable onPress={() => nav.openSheet('currency', { onPick: (c) => { dirty.current = true; setCurrency(c); setRateText(''); } })} accessibilityRole="button" accessibilityLabel={`Currency ${currency}`} hitSlop={8} style={{ minHeight: 26, paddingHorizontal: 10, borderRadius: 999, justifyContent: 'center' }}>
+          <T size={12} weight="medium" color={th.faint}>{currency} ▾</T>
         </Pressable>
         {offer ? (
-          <Pressable onPress={useOffer} accessibilityRole="button" accessibilityLabel={`Use ${offer.amount} as the amount, ${offer.why}`} style={{ marginTop: 8, minHeight: 36, paddingHorizontal: 14, borderRadius: 999, backgroundColor: th.accentSoft, justifyContent: 'center' }}>
+          <Pressable onPress={useOffer} accessibilityRole="button" accessibilityLabel={`Use ${offer.amount} as the amount, ${offer.why}`} style={{ marginTop: 6, minHeight: 32, paddingHorizontal: 14, borderRadius: 999, backgroundColor: th.accentSoft, justifyContent: 'center' }}>
             <T size={13} weight="medium" color={th.accent}>Use {offer.amount} · {offer.why}</T>
           </Pressable>
         ) : null}
         {errors.amount ? <T size={13} color={th.danger} style={{ marginTop: 6 }}>{errors.amount}</T> : null}
         {foreign ? (
-          <Pressable onPress={() => nav.openSheet('rate', { currency, home, value: rateText || (autoRate ? String(autoRate) : ''), onPick: (v) => { dirty.current = true; setRateText(v); } })} accessibilityRole="button" style={{ marginTop: 8 }}>
+          <Pressable onPress={() => nav.openSheet('rate', { currency, home, value: rateText || (autoRate ? String(autoRate) : ''), onPick: (v) => { dirty.current = true; setRateText(v); } })} accessibilityRole="button" style={{ marginTop: 6 }}>
             <T size={13} color={rate ? th.faint : th.warn} center>
               {rate ? `1 ${currency} = ${fmt(rate, { decimals: 4 })} ${home}${rateText ? ' (your rate)' : ''} · ≈ ${app.money((amt || 0) * rate)} ${home}` : 'Rate to check: no rate saved yet. Tap to type one.'}
             </T>
@@ -238,9 +300,22 @@ export default function AddRecord({ id, type: startType, prefill }) {
         {errors.rate ? <T size={13} color={th.danger}>{errors.rate}</T> : null}
       </View>
 
+      {usual.length ? (
+        <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+          {usual.map((s) => {
+            const c = data.categories[s.categoryId];
+            return (
+              <Squish key={s.name} onPress={() => pickSuggestion(s)} accessibilityLabel={`Use ${s.name}`} style={{ height: 30, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: th.lineStrong, justifyContent: 'center' }}>
+                <T size={12.5} weight="medium" color={th.muted}>{c && !c.deleted ? `${c.emoji} ` : ''}{s.name}</T>
+              </Squish>
+            );
+          })}
+        </View>
+      ) : null}
+
       {type !== 'transfer' ? (
         <View>
-          <Field label="Name" value={name} onChangeText={(v) => { dirty.current = true; setErrors({}); setHintAmount(''); setName(v); }} onFocus={() => setNameFocus(true)} onBlur={() => setTimeout(() => setNameFocus(false), 150)} placeholder={type === 'income' ? 'Salary' : type === 'iowe' ? 'Phone bill' : type === 'owed' ? 'Dinner split' : 'Grocery'} autoCapitalize="sentences" />
+          <Field value={name} onChangeText={(v) => { dirty.current = true; setErrors({}); setHintAmount(''); setName(v); }} onFocus={() => setNameFocus(true)} onBlur={() => setTimeout(() => setNameFocus(false), 150)} placeholder={type === 'income' ? 'Name, like Salary' : type === 'iowe' ? 'Name, optional, like Rent help' : type === 'owed' ? 'Name, optional, like Dinner' : 'Name, like Countdown'} autoCapitalize="sentences" accessibilityLabel="Name" />
           {suggestions.length ? (
             <Card pad={0} style={{ marginTop: 6, paddingHorizontal: 14 }}>
               {suggestions.map((s, i) => {
@@ -252,42 +327,83 @@ export default function AddRecord({ id, type: startType, prefill }) {
         </View>
       ) : null}
 
+      {isDebt ? (
+        <Card pad={0} style={{ paddingHorizontal: 16 }}>
+          <Row first label="Who" right={
+            <TextInput value={who} onChangeText={touch(setWho)} onFocus={() => setWhoFocus(true)} onBlur={() => setTimeout(() => setWhoFocus(false), 150)} placeholder="Name" placeholderTextColor={th.faint2} accessibilityLabel="Who" style={{ fontFamily: F.regular, fontSize: 15 * (th.textScale || 1), color: th.ink, minWidth: 140, textAlign: 'right' }} />
+          } />
+          {people.length ? <Chips style={{ paddingBottom: 10 }}>{people.map((p) => <Chip key={p.name} label={p.name} onPress={() => { dirty.current = true; setWho(p.name); setWhoFocus(false); }} />)}</Chips> : null}
+          <Row label="Pay back by" value={fmtShort(dueDate, { weekday: true })} onPress={() => nav.openSheet('date', { value: dueDate, title: 'Pay back by', onPick: touch(setDueDate) })} />
+        </Card>
+      ) : (
+        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+          {type !== 'transfer' ? (
+            <Squish onPress={() => nav.openSheet('category', { kind: catKind, value: categoryId, onPick: (cid) => { dirty.current = true; setErrors({}); setCategoryId(cid); } })} accessibilityLabel={`Category ${cat && !cat.deleted ? cat.name : 'not picked'}`} style={[pill, { paddingLeft: 6 }, errors.category ? { borderWidth: 1.5, borderColor: th.danger } : null]}>
+              {cat && !cat.deleted ? <Bubble emoji={cat.emoji} color={catColor(cat)} size={28} /> : <View style={{ width: 28, height: 28, borderRadius: 10, borderWidth: 1.5, borderStyle: 'dashed', borderColor: th.lineStrong }} />}
+              <T size={14} weight="medium" color={cat && !cat.deleted ? th.ink : th.muted}>{cat && !cat.deleted ? cat.name : 'Category'}</T>
+            </Squish>
+          ) : null}
+          <Squish onPress={() => nav.openSheet('date', { value: date, onPick: touch(setDate) })} accessibilityLabel={`Date ${datePill}`} style={[pill, willWait ? { backgroundColor: th.warnSoft } : null]}>
+            <Icon name="calendar" size={15} color={willWait ? th.warn : th.muted} />
+            <T size={14} weight="medium" color={willWait ? th.warn : th.ink}>{datePill}</T>
+          </Squish>
+          {!future ? (
+            <Squish onPress={() => { dirty.current = true; setNotPaid(!notPaid); }} accessibilityRole="switch" accessibilityLabel="Not paid yet" style={[pill, notPaid ? { backgroundColor: th.warnSoft, borderWidth: 1, borderColor: th.warnBorder } : null]}>
+              <T size={13.5} weight="medium" color={notPaid ? th.warn : th.muted}>{notPaid ? '✓ ' : ''}{type === 'income' ? 'Not arrived yet' : type === 'transfer' ? 'Not moved yet' : 'Not paid yet'}</T>
+            </Squish>
+          ) : null}
+        </View>
+      )}
+
+      {type === 'transfer' ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <AccButton a={acc} label="From" on={!!acc} app={app} th={th} onPress={() => pickAccount(setAccountId, 'From')} />
+          <Squish onPress={swap} accessibilityLabel="Swap From and To" style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center' }}><T size={17}>⇄</T></Squish>
+          <AccButton a={toAcc} label="To" on={!!toAcc} app={app} th={th} onPress={() => pickAccount(setToAccountId, 'To')} />
+        </View>
+      ) : (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <T size={12} color={th.faint} style={{ width: 58 }}>{accLabel}</T>
+          {live2.length <= 2 ? (
+            <View style={{ flex: 1, flexDirection: 'row', gap: 8 }}>
+              {live2.map((a) => <AccButton key={a.id} a={a} on={a.id === accountId} app={app} th={th} onPress={() => pickAcc(a.id)} />)}
+              {!live2.length ? <AccButton a={null} app={app} th={th} onPress={() => nav.push('account', {})} /> : null}
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} style={{ flex: 1 }}>
+              {live2.map((a) => <View key={a.id} style={{ width: 140 }}><AccButton a={a} on={a.id === accountId} app={app} th={th} onPress={() => pickAcc(a.id)} /></View>)}
+            </ScrollView>
+          )}
+        </View>
+      )}
+      {crossTransfer ? (
+        <Card pad={0} style={{ paddingHorizontal: 16 }}>
+          <Row first label={`Arrives as (${toAcc.currency})`} right={<TextInput value={toAmount} onChangeText={touch(setToAmount)} keyboardType="decimal-pad" placeholder={arrivesGuess ? `≈ ${fmt(arrivesGuess, { decimals: 0 })}` : 'Amount'} placeholderTextColor={th.faint2} accessibilityLabel="Amount that arrives" style={{ fontFamily: F.regular, fontSize: 15, color: th.ink, minWidth: 110, textAlign: 'right' }} />} />
+        </Card>
+      ) : null}
+      {willWait ? <T size={13} color={th.warn} center>Upcoming: not in your balance yet. {future ? `On ${fmtShort(date, { weekday: true })} Home asks` : 'Home asks'} “{type === 'income' ? 'Did it arrive?' : 'Did you pay it?'}”</T> : null}
+      {errors.account || errors.category || errors.who ? <T size={13} color={th.danger} center>{errors.account || errors.category || errors.who}</T> : null}
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {KEYS.map((k) => <View key={k} style={{ width: '31.6%', flexGrow: 1 }}><Key k={k} th={th} onPress={press} /></View>)}
+      </View>
+
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
-        {type === 'transfer' ? (
-          <>
-            <Row first label="From" value={acc ? acc.name : 'Choose'} onPress={() => pickAccount(setAccountId, 'From')} />
-            <Row label="To" value={toAcc ? toAcc.name : 'Choose'} onPress={() => pickAccount(setToAccountId, 'To')} />
-            {crossTransfer ? (
-              <Row label={`Arrives as (${toAcc.currency})`} right={<TextInput value={toAmount} onChangeText={touch(setToAmount)} keyboardType="decimal-pad" placeholder={arrivesGuess ? `≈ ${fmt(arrivesGuess, { decimals: 0 })}` : 'Amount'} placeholderTextColor={th.faint2} accessibilityLabel="Amount that arrives" style={{ fontFamily: F.regular, fontSize: 15, color: th.ink, minWidth: 110, textAlign: 'right' }} />} />
-            ) : null}
-          </>
-        ) : (
-          <Row first label="Category" value={cat && !cat.deleted ? `${cat.emoji} ${cat.name}` : 'Choose'} valueColor={errors.category ? th.danger : undefined} onPress={() => nav.openSheet('category', { kind: catKind, onPick: (cid) => { dirty.current = true; setErrors({}); setCategoryId(cid); } })} />
-        )}
-        {isDebt ? (
-          <>
-            <Row label="Who" right={
-              <TextInput value={who} onChangeText={touch(setWho)} onFocus={() => setWhoFocus(true)} onBlur={() => setTimeout(() => setWhoFocus(false), 150)} placeholder={type === 'owed' ? 'Name' : 'Optional'} placeholderTextColor={th.faint2} accessibilityLabel="Who" style={{ fontFamily: F.regular, fontSize: 15 * (th.textScale || 1), color: th.ink, minWidth: 140, textAlign: 'right' }} />
-            } />
-            {people.length ? <Chips style={{ paddingBottom: 10 }}>{people.map((p) => <Chip key={p.name} label={p.name} onPress={() => { dirty.current = true; setWho(p.name); setWhoFocus(false); }} />)}</Chips> : null}
-            <Row label="Due" value={fmtShort(dueDate, { weekday: true })} onPress={() => nav.openSheet('date', { value: dueDate, title: 'Due date', onPick: touch(setDueDate) })} />
-          </>
-        ) : (
-          <Row label="Date" value={date === today() ? `Today, ${fmtShort(date)}` : fmtShort(date, { weekday: true })} onPress={() => nav.openSheet('date', { value: date, onPick: touch(setDate) })} />
-        )}
-        {type !== 'transfer' ? <Row label={ACCOUNT_LABEL[subKind] || 'Account'} value={acc && !acc.deleted ? acc.name : 'Choose'} valueColor={errors.account ? th.danger : undefined} onPress={() => pickAccount(setAccountId, ACCOUNT_LABEL[subKind])} /> : null}
+        <Pressable onPress={() => setMore(!more)} accessibilityRole="button" accessibilityState={{ expanded: more }} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <T size={14} weight="medium" color={th.muted}>{type === 'expense' && !old ? 'Repeat, split, receipt, note' : type === 'transfer' ? 'Repeat, note' : 'Repeat, receipt, note'}</T>
+          <Icon name={more ? 'chevron-up' : 'chevron-down'} size={18} color={th.faint} />
+        </Pressable>
         {more ? (
           <>
         <Row label="Repeats" value={repeatLabel} onPress={() => setRepeatOpen(!repeatOpen)} right={null} chevron={false} />
         {repeatOpen ? (
           <Chips style={{ paddingBottom: 14 }}>
-            {[['never', 'Never'], ['weekly', 'Weekly'], ['fortnightly', 'Fortnightly'], ['monthly', 'Monthly']].map(([p, l]) => (
-              <Chip key={p} label={l} on={preset === p} onPress={() => { dirty.current = true; setPreset(p); setRepeatOpen(false); }} />
+            {[['never', 'Never'], ['weekly', 'Weekly'], ['fortnightly', 'Fortnightly'], ['monthly', 'Monthly']].map(([pr, l]) => (
+              <Chip key={pr} label={l} on={preset === pr} onPress={() => { dirty.current = true; setPreset(pr); setRepeatOpen(false); }} />
             ))}
             <Chip label="Custom" on={preset === 'custom'} onPress={() => nav.push('repeat', { draftRule: customRule, start: isDebt ? dueDate : date, type, onDone: (r) => { dirty.current = true; setCustomRule(r); setPreset('custom'); setRepeatOpen(false); } })} />
           </Chips>
         ) : null}
-        {type === 'iowe' ? <Row label="Remind me" value={data.reminders.on === false ? 'Off' : Number(data.reminders.billDays) ? `${data.reminders.billDays} days before` : 'On the day'} onPress={() => nav.push('settings', { section: 'reminders' })} /> : null}
         {type === 'expense' && !old ? (
           <Row label="Split with someone" right={<Toggle value={split} onChange={(v) => { dirty.current = true; setSplit(v); }} label="Split with someone" />} />
         ) : null}
@@ -303,16 +419,11 @@ export default function AddRecord({ id, type: startType, prefill }) {
         ) : null}
           </>
         ) : null}
-        <Pressable onPress={() => setMore(!more)} accessibilityRole="button" accessibilityState={{ expanded: more }} style={{ minHeight: 48, justifyContent: 'center', borderTopWidth: 1, borderTopColor: th.line }}>
-          <T size={14} weight="medium" color={th.accent}>{more ? 'Fewer options' : type === 'expense' && !old ? 'More options: repeat, split, receipt, description' : type === 'transfer' ? 'More options: repeat, description' : 'More options: repeat, receipt, description'}</T>
-        </Pressable>
       </Card>
-      {!isDebt && date > today() ? <T size={13} color={th.faint} style={{ marginHorizontal: 4, marginTop: -4 }}>That's a future date, so it waits as Scheduled and counts from {fmtShort(date)}.</T> : null}
-      {errors.account || errors.category || errors.who ? <T size={13} color={th.danger} style={{ marginTop: -4 }}>{errors.account || errors.category || errors.who}</T> : null}
 
       {more ? (
       <View>
-        <Field label="Description" value={description} onChangeText={touch(setDescription)} onFocus={() => setDescFocus(true)} onBlur={() => setTimeout(() => setDescFocus(false), 150)} placeholder="Optional" multiline inputStyle={{ paddingTop: 14, paddingBottom: 14 }} />
+        <Field label="Note" value={description} onChangeText={touch(setDescription)} onFocus={() => setDescFocus(true)} onBlur={() => setTimeout(() => setDescFocus(false), 150)} placeholder="Optional" multiline inputStyle={{ paddingTop: 14, paddingBottom: 14 }} />
         {descs.length ? (
           <Chips style={{ marginTop: 8 }}>
             {descs.map((d) => <Chip key={d.text} label={d.text.length > 28 ? `${d.text.slice(0, 27)}…` : d.text} onPress={() => { dirty.current = true; setDescription(d.text); setDescFocus(false); }} />)}
@@ -320,7 +431,6 @@ export default function AddRecord({ id, type: startType, prefill }) {
         ) : null}
       </View>
       ) : null}
-
       {more && type !== 'transfer' ? (
         <Card>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -335,7 +445,7 @@ export default function AddRecord({ id, type: startType, prefill }) {
               {photos.map((u) => (
                 <View key={u}>
                   <Image source={{ uri: u }} style={{ width: 72, height: 72, borderRadius: 12, backgroundColor: th.soft }} accessibilityLabel="Receipt photo" />
-                  <Pressable onPress={() => { dirty.current = true; setPhotos((p) => p.filter((x) => x !== u)); }} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8} style={{ position: 'absolute', top: -6, right: -6, width: 24, height: 24, borderRadius: 12, backgroundColor: th.ink, alignItems: 'center', justifyContent: 'center' }}>
+                  <Pressable onPress={() => { dirty.current = true; setPhotos((ps) => ps.filter((x) => x !== u)); }} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8} style={{ position: 'absolute', top: -6, right: -6, width: 24, height: 24, borderRadius: 12, backgroundColor: th.ink, alignItems: 'center', justifyContent: 'center' }}>
                     <T size={12} color={th.bg}>✕</T>
                   </Pressable>
                 </View>

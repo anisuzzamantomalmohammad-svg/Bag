@@ -4,24 +4,25 @@ import React, { useMemo, useState } from 'react';
 import { Image, Modal, Pressable, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, IconBox, Row, Screen, T, useTheme } from '../ui/kit';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { Bubble, Button, Card, Row, Screen, T, useTheme } from '../ui/kit';
+import { accountEmoji, catColor } from '../lib/look';
 import { IconButton, RecordRow, recordAmount, recordEmoji, useRecordActions } from '../ui/parts';
-import { KIND_LABEL, TYPE_LABEL, displayName, flowsOf, homeOf, isOpen, kindOf, liveRecords, statusOf, byNewest } from '../lib/ledger';
+import { TYPE_LABEL, displayName, flowsOf, homeOf, isOpen, isPending, kindOf, liveRecords, statusOf, byNewest } from '../lib/ledger';
 import { describe } from '../lib/repeats';
 import { fmtDate, ymd } from '../lib/dates';
 import { fmt, fmtApprox, parseAmount } from '../lib/money';
 import { pickPhoto } from '../lib/photos';
 
 function countsAs(r) {
-  const f = flowsOf({ ...r, status: r.status === 'pending' ? 'paid' : r.status });
+  const f = flowsOf({ ...r, status: isPending(r) ? 'paid' : r.status });
   const k = kindOf(r);
-  if (r.type === 'transfer') return 'Neither: money moved between your accounts';
+  if (r.type === 'transfer') return isPending(r) ? 'Neither, and it moves nothing until you mark it moved' : 'Neither: money moved between your accounts';
   if (r.type === 'iowe' && k === 'borrowed') return 'Neither: borrowed money is not cash in';
   if (r.type === 'owed' && k === 'lent') return 'Neither: lent money is not cash out';
   if (r.type === 'iowe') return isOpen(r) ? 'Cash out, once you mark it paid' : 'Cash out, on the day you paid';
   if (r.type === 'owed') return isOpen(r) ? 'Cash in, once it arrives' : 'Cash in, on the day it arrived';
-  if (r.status === 'scheduled') return `${r.type === 'income' ? 'Cash in' : 'Cash out'}, from its date`;
-  if (r.status === 'pending') return `${r.type === 'income' ? 'Cash in' : 'Cash out'}, once you confirm it`;
+  if (isPending(r)) return `${r.type === 'income' ? 'Cash in' : 'Cash out'}, once you mark it ${r.type === 'income' ? 'received' : 'paid'}. Nothing until then.`;
   return f.some((x) => x.count === 'income') ? 'Cash in' : 'Cash out';
 }
 
@@ -61,7 +62,9 @@ export default function RecordDetail({ id }) {
   const open = isOpen(r);
   const foreign = r.currency && r.currency !== home;
   const sec = app.second(homeOf(r), 'record');
-  const statusColor = status === 'Overdue' ? th.out : status === 'Pending' || status === 'Open' ? th.warn : th.muted;
+  const pending = isPending(r);
+  const money = r.type === 'expense' || r.type === 'income' || r.type === 'transfer';
+  const statusColor = status === 'Overdue' || status === 'Upcoming' || status === 'Open' ? th.warn : th.muted;
   const photos = (data.photos || {})[r.id] || [];
   const sameTotal = same.reduce((s, x) => s + homeOf(x), 0) + homeOf(r);
 
@@ -71,12 +74,18 @@ export default function RecordDetail({ id }) {
   const editAmount = () => nav.openSheet('text', { title: 'Amount', value: String(r.amount), number: true, placeholder: '0.00', onPick: (v) => { const n = parseAmount(v); if (n > 0) set({ amount: n }); } });
   const editCategory = () => nav.openSheet('category', { kind: r.type === 'income' || (r.type === 'owed' && kindOf(r) === 'work') ? 'income' : 'expense', value: r.categoryId, onPick: (cid) => set({ categoryId: cid }) });
   const editAccount = (key, title, exclude) => nav.openSheet('account', { title, value: r[key], exclude, onPick: (aid) => set({ [key]: aid }) });
+  const tone = cat && !cat.deleted ? catColor(cat) : r.type === 'transfer' ? th.chipOn : debt ? '#B79CF0' : color;
+  const an = (a) => (a && !a.deleted ? `${accountEmoji(a)} ${a.name}` : 'Choose');
   const showBadge = status && !(status === 'Paid' || status === 'Received');
 
   return (
     <Screen title="" right={<IconButton name="edit-2" label="Edit" onPress={() => nav.push('add', { id: r.id })} />}>
-      <View style={{ alignItems: 'center', gap: 6, paddingTop: 4, paddingBottom: 6 }}>
-        <IconBox emoji={recordEmoji(r, data.categories)} size={56} />
+      <View style={{ alignItems: 'center', gap: 6, paddingTop: 18, paddingBottom: 18, borderRadius: 26, overflow: 'hidden' }}>
+        <Svg style={{ position: 'absolute', top: 0, left: 0 }} width="100%" height="100%" pointerEvents="none">
+          <Defs><LinearGradient id="rdg" x1="0" y1="0" x2="0.4" y2="1"><Stop offset="0" stopColor={tone} stopOpacity={0.22} /><Stop offset="1" stopColor={tone} stopOpacity={0.02} /></LinearGradient></Defs>
+          <Rect x="0" y="0" width="100%" height="100%" fill="url(#rdg)" />
+        </Svg>
+        <Bubble emoji={recordEmoji(r, data.categories)} color={tone} size={60} />
         <Pressable onPress={editName} accessibilityRole="button" accessibilityLabel={`Name: ${displayName(r, data)}. Tap to change`} hitSlop={6}>
           <T size={18} weight="semi" center>{displayName(r, data)}</T>
         </Pressable>
@@ -86,31 +95,37 @@ export default function RecordDetail({ id }) {
         {foreign ? <T size={13} color={th.faint}>≈ {app.money(homeOf(r))} {home} at {fmt(r.rate, { decimals: 4 })}{r.rateCheck ? ' · rate to check' : ''}</T>
           : sec ? <T size={13} color={th.faint}>{fmtApprox(sec.amount, sec.currency)}</T> : null}
         {showBadge ? (
-          <View style={{ paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: th.soft, marginTop: 2 }}>
-            <T size={13} weight="medium" color={statusColor}>{status}{r.status === 'settled' && r.settledDate ? ` · ${fmtDate(r.settledDate)}` : r.status === 'scheduled' ? ` · counts from ${fmtDate(r.date)}` : ''}</T>
+          <View style={{ paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: pending || status === 'Open' || status === 'Overdue' ? th.warnSoft : th.soft, marginTop: 2 }}>
+            <T size={13} weight="medium" color={statusColor}>{status}{r.status === 'settled' && r.settledDate ? ` · ${fmtDate(r.settledDate)}` : pending ? ` · ${fmtDate(r.date, { weekday: true, year: false })}` : ''}</T>
           </View>
         ) : null}
       </View>
 
-      {r.status === 'pending' ? (
-        <Button label={r.type === 'income' ? 'Did it arrive?' : 'Did you pay it?'} onPress={() => nav.openSheet('confirm', { id: r.id })} />
+      {pending ? (
+        <>
+          <Button label={r.type === 'income' ? 'Mark received' : r.type === 'transfer' ? 'Mark moved' : 'Mark paid'} onPress={() => app.markPaid(r.id)} />
+          <Pressable onPress={() => nav.openSheet('confirm', { id: r.id })} accessibilityRole="button" hitSlop={6} style={{ alignSelf: 'center', marginTop: -4 }}>
+            <T size={13} weight="medium" color={th.accent}>{r.type === 'income' ? 'Got a different amount?' : 'Paid a different amount?'}</T>
+          </Pressable>
+        </>
       ) : null}
-      {open ? <Button label={r.type === 'iowe' ? 'Mark paid' : 'Mark received'} onPress={() => nav.openSheet('settle', { id: r.id })} /> : null}
-      {debt && r.status === 'settled' ? <Button label={r.type === 'iowe' ? 'Mark not paid' : 'Mark not received'} kind="secondary" onPress={() => app.reopenRecord(r.id)} /> : null}
+      {money && !pending && r.status !== 'skipped' ? <Button label={r.type === 'income' ? 'Not received yet' : r.type === 'transfer' ? 'Not moved yet' : 'Not paid yet'} kind="secondary" onPress={() => app.unpay(r.id)} /> : null}
+      {open ? <Button label={r.type === 'iowe' ? 'Mark paid back' : 'Mark got it back'} onPress={() => nav.openSheet('settle', { id: r.id })} /> : null}
+      {debt && r.status === 'settled' ? <Button label={r.type === 'iowe' ? 'Not paid back yet' : 'Not back yet'} kind="secondary" onPress={() => app.reopenRecord(r.id)} /> : null}
 
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
-        <Row first label="Type" value={`${TYPE_LABEL[r.type]}${debt ? ` · ${KIND_LABEL[kindOf(r)]}` : ''}`} />
-        {r.type !== 'transfer' ? <Row label="Category" value={cat && !cat.deleted ? `${cat.emoji} ${cat.name}` : 'Choose'} onPress={editCategory} /> : null}
-        {debt ? <Row label="Added" value={fmtDate(r.date, { weekday: true })} /> : <Row label="Date" value={fmtDate(r.date, { weekday: true })} onPress={() => nav.openSheet('date', { value: r.date, onPick: (d) => d && set({ date: d }) })} />}
-        {debt ? <Row label="Due" value={r.dueDate ? fmtDate(r.dueDate, { weekday: true }) : 'No date'} valueColor={status === 'Overdue' ? th.out : undefined} onPress={() => nav.openSheet('date', { value: r.dueDate || r.date, title: 'Due date', onPick: (d) => d && set({ dueDate: d }) })} /> : null}
+        <Row first label="Kind" value={debt ? `People · ${TYPE_LABEL[r.type]}` : TYPE_LABEL[r.type]} />
+        {r.type !== 'transfer' && !debt ? <Row label="Category" value={cat && !cat.deleted ? `${cat.emoji} ${cat.name}` : 'Choose'} onPress={editCategory} /> : null}
+        {debt ? <Row label="Added" value={fmtDate(r.date, { weekday: true })} /> : <Row label={pending ? 'Due' : 'Date'} value={fmtDate(r.date, { weekday: true })} onPress={() => nav.openSheet('date', { value: r.date, onPick: (d) => d && set({ date: d }) })} />}
+        {debt ? <Row label="Pay back by" value={r.dueDate ? fmtDate(r.dueDate, { weekday: true }) : 'No date'} valueColor={status === 'Overdue' ? th.out : undefined} onPress={() => nav.openSheet('date', { value: r.dueDate || r.date, title: 'Pay back by', onPick: (d) => d && set({ dueDate: d }) })} /> : null}
         {r.who ? <Row label={r.type === 'iowe' ? 'To' : 'Who'} value={r.who} /> : null}
         {r.type === 'transfer' ? (
           <>
-            <Row label="From" value={acc ? acc.name : '?'} onPress={() => editAccount('accountId', 'From', [r.toAccountId])} />
-            <Row label="To" value={toAcc ? `${toAcc.name}${r.toAmount ? ` · ${app.money(r.toAmount, { currency: r.toCurrency })}` : ''}` : '?'} onPress={() => editAccount('toAccountId', 'To', [r.accountId])} />
+            <Row label="From" value={acc ? an(acc) : '?'} onPress={() => editAccount('accountId', 'From', [r.toAccountId])} />
+            <Row label="To" value={toAcc ? `${an(toAcc)}${r.toAmount ? ` · ${app.money(r.toAmount, { currency: r.toCurrency })}` : ''}` : '?'} onPress={() => editAccount('toAccountId', 'To', [r.accountId])} />
           </>
         ) : (
-          <Row label={r.type === 'income' || (r.type === 'iowe' && kindOf(r) === 'borrowed') ? 'Into' : r.type === 'owed' && kindOf(r) === 'work' ? 'Into' : 'Account'} value={acc && !acc.deleted ? acc.name : 'Choose'} onPress={() => editAccount('accountId', 'Account')} />
+          <Row label={r.type === 'income' || (r.type === 'iowe' && kindOf(r) === 'borrowed') ? 'Into' : r.type === 'owed' && kindOf(r) === 'work' ? 'Into' : 'Paid from'} value={an(acc)} onPress={() => editAccount('accountId', 'Account')} />
         )}
         {r.status === 'settled' && settleAcc && settleAcc.id !== r.accountId ? <Row label={r.type === 'iowe' ? 'Paid from' : 'Paid into'} value={settleAcc.name} /> : null}
         {rep ? <Row label="Repeats" value={rep.deleted ? 'Stopped' : rep.paused ? 'Paused' : describe(rep)} onPress={!rep.deleted ? () => nav.push('repeat', { id: rep.id }) : undefined} /> : null}

@@ -1,4 +1,4 @@
-// First run: home currency, the first account, reminders. (A second
+// First run: home currency, Bank and Cash amounts, reminders. (A second
 // currency is off until switched on in Settings.) Signing in with Google (to pull records from another phone) and importing
 // an Excel file are offered but never required.
 import React, { useState } from 'react';
@@ -6,7 +6,8 @@ import { Image, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, Field, Icon, Row, T, useTheme } from '../ui/kit';
+import { Bubble, Button, Card, Field, Icon, Row, T, useTheme } from '../ui/kit';
+import { ACCOUNT_KINDS } from '../data/defaults';
 import { COMMON, currencyName } from '../data/currencies';
 import { askPermission, ensureChannel } from '../lib/reminders';
 import { googleConfigured } from '../lib/google';
@@ -38,8 +39,8 @@ export default function Onboarding() {
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState(0);
   const [home, setHome] = useState(app.data.homeCurrency || 'NZD');
-  const [accName, setAccName] = useState('Everyday');
-  const [opening, setOpening] = useState('');
+  const [bank, setBank] = useState('');
+  const [cash, setCash] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [importAfter, setImportAfter] = useState(false);
@@ -52,9 +53,10 @@ export default function Onboarding() {
       await ensureChannel();
       await askPermission();
     }
-    const o = opening.trim() ? parseAmount(opening) : 0;
+    const num = (t) => { const o = t.trim() ? parseAmount(t) : 0; return Number.isNaN(o) ? 0 : o; };
     app.update({ homeCurrency: home, reminders: { ...app.data.reminders, on: !!reminders } });
-    app.saveAccount({ name: accName.trim() || 'Everyday', currency: home, opening: Number.isNaN(o) ? 0 : o, openingDate: today() });
+    app.saveAccount({ name: 'Bank', kind: 'bank', currency: home, opening: num(bank), openingDate: today(), order: 0 });
+    app.saveAccount({ name: 'Cash', kind: 'cash', currency: home, opening: num(cash), openingDate: today(), order: 1 });
     app.update({ onboarded: true });
     if (importAfter) setTimeout(() => nav.push('import'), 400);
   };
@@ -70,7 +72,7 @@ export default function Onboarding() {
   };
 
   const checkAccount = () => {
-    if (opening.trim() && Number.isNaN(parseAmount(opening))) { setErr('Opening balance should be a number, like 1250.50'); return; }
+    if ([bank, cash].some((t) => t.trim() && Number.isNaN(parseAmount(t)))) { setErr('Amounts should be numbers, like 1250.50'); return; }
     next();
   };
 
@@ -91,7 +93,7 @@ export default function Onboarding() {
           <>
             <View style={{ alignItems: 'center', gap: 12, marginBottom: 12 }}>
               <Image source={require('../../assets/icon.png')} style={{ width: 88, height: 88, borderRadius: 22 }} accessibilityIgnoresInvertColors />
-              <T size={30} weight="bold">Bag</T>
+              <T size={40} serif>Bag</T>
               <T size={16} color={th.muted} center style={{ maxWidth: 300 }}>Money in, money out, who owes who. Everything stays on this phone unless you turn on Google sync.</T>
             </View>
             <Button label="Start" onPress={next} />
@@ -101,7 +103,7 @@ export default function Onboarding() {
 
         {id === 'home' ? (
           <>
-            <T size={24} weight="semi">Your home currency</T>
+            <T size={28} serif>Your home currency</T>
             <T color={th.muted}>Totals, budgets and reports use this. Each record can still be in any currency.</T>
             <CurrencyList value={home} onPick={(c) => { if (c) setHome(c); }} />
             <T size={13} color={th.faint}>Want a second currency shown too, like BDT? Turn it on later in Settings → Money.</T>
@@ -110,11 +112,16 @@ export default function Onboarding() {
 
         {id === 'account' ? (
           <>
-            <T size={24} weight="semi">Your first account</T>
-            <T color={th.muted}>Where your money sits: a bank account, cash, a card. Add more later.</T>
-            <Field label="Name" value={accName} onChangeText={(t) => { setErr(''); setAccName(t); }} placeholder="Everyday" autoCapitalize="words" />
-            <Field label={`What's in it now (${home})`} value={opening} onChangeText={(t) => { setErr(''); setOpening(t); }} keyboardType="numbers-and-punctuation" placeholder="0.00" />
-            <T size={13} color={th.faint}>This is the opening balance. It isn't counted as income.</T>
+            <T size={28} serif>What's in your bag now?</T>
+            <T color={th.muted}>Two places to start: your bank and the cash in your wallet. Every record then says which one it came from.</T>
+            {[['bank', 'Bank', bank, setBank], ['cash', 'Cash', cash, setCash]].map(([k, l, v, set]) => (
+              <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: th.card, borderRadius: 20, padding: 14 }}>
+                <Bubble emoji={ACCOUNT_KINDS[k].emoji} color={ACCOUNT_KINDS[k].color} size={44} />
+                <T size={16} weight="medium" style={{ flex: 1 }}>{l}</T>
+                <Field value={v} onChangeText={(t) => { setErr(''); set(t); }} keyboardType="decimal-pad" placeholder="0.00" accessibilityLabel={`${l} amount`} style={{ width: 140 }} inputStyle={{ textAlign: 'right', backgroundColor: th.soft }} />
+              </View>
+            ))}
+            <T size={13} color={th.faint}>These are opening balances, not income. Rename them or add a card later in Settings → Accounts.</T>
             {err ? <T size={13} color={th.danger}>{err}</T> : null}
             <Card pad={0} style={{ paddingHorizontal: 16 }}>
               <Row first label="Bring records in from Excel" sub="You'll pick the file after setup" right={<Icon name={importAfter ? 'check-square' : 'square'} size={20} color={importAfter ? th.accent : th.faint2} />} onPress={() => setImportAfter(!importAfter)} chevron={false} />
@@ -124,7 +131,7 @@ export default function Onboarding() {
 
         {id === 'reminders' ? (
           <>
-            <T size={24} weight="semi">Reminders</T>
+            <T size={28} serif>Reminders</T>
             <T color={th.muted}>Bag can remind you 2 days before a bill is due, and ask “Did it arrive?” when a repeat like salary comes round. You choose the timing in Settings.</T>
           </>
         ) : null}

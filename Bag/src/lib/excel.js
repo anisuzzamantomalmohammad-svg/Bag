@@ -10,9 +10,11 @@ import { round2 } from './money';
 import { allFlows, effectiveDate, flowsOf, kindOf, live, liveRecords, statusOf, TYPE_LABEL, KIND_LABEL } from './ledger';
 import { newId, slug } from './ids';
 
-const TYPE_FROM = { expense: 'expense', income: 'income', 'i owe': 'iowe', iowe: 'iowe', 'owed to me': 'owed', owed: 'owed', transfer: 'transfer' };
+const OLD_NAMES = { 'bills and other': 'bills', 'clothing and accessories': 'clothing' };
+
+const TYPE_FROM = { expense: 'expense', income: 'income', 'cash out': 'expense', 'cash in': 'income', 'i owe': 'iowe', iowe: 'iowe', 'i borrowed': 'iowe', 'owed to me': 'owed', owed: 'owed', 'i lent': 'owed', transfer: 'transfer', move: 'transfer' };
 const KIND_FROM = { bill: 'bill', 'borrowed money': 'borrowed', borrowed: 'borrowed', 'lent or split': 'lent', lent: 'lent', split: 'lent', 'payment for work': 'work', work: 'work' };
-const STATUS_FROM = { paid: 'paid', received: 'received', open: 'open', overdue: 'open', settled: 'settled', pending: 'pending', skipped: 'skipped' };
+const STATUS_FROM = { paid: 'paid', received: 'received', open: 'open', overdue: 'open', settled: 'settled', pending: 'pending', upcoming: 'pending', scheduled: 'pending', skipped: 'skipped' };
 
 export const columns = (home) => [
   'Date', 'Type', 'Kind', 'Name', 'Category', 'Description', 'Amount', 'Currency', 'Rate', `Amount ${home}`,
@@ -208,8 +210,10 @@ export function planImport(data, { rows, format }) {
   const records = {};
   const stamp = Date.now();
   const byName = (coll, extra, n, kind) => {
-    const want = String(n || '').trim().toLowerCase();
-    if (!want) return null;
+    const typed = String(n || '').trim().toLowerCase();
+    if (!typed) return null;
+    // Names from before 2.0 land in the renamed categories.
+    const want = coll === data.categories ? (OLD_NAMES[typed] || typed) : typed;
     const found = [...live(coll), ...Object.values(extra)].find((x) => x.name.trim().toLowerCase() === want && (!kind || !x.kind || x.kind === kind));
     return found || null;
   };
@@ -277,7 +281,7 @@ export function planImport(data, { rows, format }) {
       type,
       name: nameStr,
       description: String(o.description || '').trim(),
-      categoryId: type === 'transfer' ? null : category(o.category || (format === 'cashbook' ? (type === 'income' ? 'Other income' : 'Bills and other') : ''), catKind),
+      categoryId: type === 'transfer' ? null : category(o.category || (format === 'cashbook' ? (type === 'income' ? 'Other income' : 'Other') : ''), catKind),
       amount,
       currency,
       rate: rate || 1,
@@ -296,7 +300,7 @@ export function planImport(data, { rows, format }) {
     if (type === 'expense') rec.status = st === 'pending' ? 'pending' : 'paid';
     else if (type === 'income') rec.status = st === 'pending' ? 'pending' : 'received';
     else if (type === 'transfer') rec.status = 'paid';
-    if ((type === 'expense' || type === 'income' || type === 'transfer') && rec.status !== 'pending' && date > todayYmd()) rec.status = 'scheduled';
+    if ((type === 'expense' || type === 'income' || type === 'transfer') && date > todayYmd()) rec.status = 'pending';
     if (type === 'iowe' || type === 'owed') {
       rec.status = st === 'settled' ? 'settled' : 'open';
       rec.dueDate = toYmd(o['due date']) || null;

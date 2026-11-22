@@ -4,12 +4,13 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { AppState, Platform, useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_CATEGORIES, HOME_CARDS } from '../data/defaults';
+import { accountKind, catColor } from '../lib/look';
 import { currencyDecimals } from '../data/currencies';
 import { resolveTheme } from '../theme/palettes';
 import { newId, repeatRecordId } from '../lib/ids';
 import { addDays, daysBetween, today as todayYmd } from '../lib/dates';
 import { fmt, fmtMoney, round2 } from '../lib/money';
-import { allFlows, defaultKind, wakeScheduled } from '../lib/ledger';
+import { allFlows, defaultKind, unpayAutoCounted, upgradeRecords } from '../lib/ledger';
 import { materialise } from '../lib/repeats';
 import { ensureRates, latestRate, loadRates, savedRate } from '../lib/rates';
 import { mergeSync, purgeTombstones, stampChanges, syncPayload, COLLECTIONS, WHOLE_FIELDS } from '../lib/sync';
@@ -60,6 +61,8 @@ export const DEFAULTS = {
   dirtyAt: 0,
   lastDriveBackupAt: null,
   lastAccountId: null,
+  askLater: {}, // record id -> the day you said "Not yet" on Home
+  upgraded12: false, // 1.2 has checked for things 1.0.1 counted by itself
 };
 
 function initialData() {
@@ -81,8 +84,32 @@ function withDefaults(saved) {
     swipe: { ...DEFAULTS.swipe, ...(saved.swipe || {}) },
     secondShow: { ...DEFAULTS.secondShow, ...(saved.secondShow || {}) },
     photos: saved.photos || {},
-    homeCards: [...cards, ...HOME_CARDS.filter((c) => !known.has(c.id))],
+    homeCards: [...cards, ...HOME_CARDS.filter((c) => !known.has(c.id))].map((c) => ({ ...c, label: (HOME_CARDS.find((h) => h.id === c.id) || c).label })),
+    askLater: saved.askLater || {},
   };
+}
+
+// 1.2: the new categories (each with a colour), Bills and other renamed to
+// Bills, and every account marked Bank, Cash, Savings or Card.
+function upgradeLook(d) {
+  const t = now();
+  const categories = {};
+  const accounts = {};
+  const have = d.categories || {};
+  DEFAULT_CATEGORIES.forEach((c) => {
+    const cur = have[c.id];
+    if (!cur) categories[c.id] = { ...c, createdAt: t, updatedAt: t };
+    else if (!cur.deleted) {
+      const patch = {};
+      if (!cur.color) patch.color = c.color;
+      if (c.id === 'bills' && cur.name === 'Bills and other') patch.name = 'Bills';
+      if (c.id === 'clothing' && cur.name === 'Clothing and accessories') patch.name = 'Clothing';
+      if (Object.keys(patch).length) categories[c.id] = { ...cur, ...patch, updatedAt: t };
+    }
+  });
+  Object.values(have).forEach((c) => { if (c && !c.deleted && !c.color && !categories[c.id]) categories[c.id] = { ...c, color: catColor(c), updatedAt: t }; });
+  Object.values(d.accounts || {}).forEach((a) => { if (a && !a.deleted && !a.kind) accounts[a.id] = { ...a, kind: accountKind(a), updatedAt: t }; });
+  return Object.keys(categories).length || Object.keys(accounts).length ? { categories, accounts } : null;
 }
 
 const AppCtx = createContext(null);
@@ -145,15 +172,25 @@ export function AppProvider({ children }) {
   }, [data]);
 
   /* ------------------------------ Repeats ------------------------------ */
+  // Brings older records up to date, then makes what repeats are due.
   const runRepeats = useCallback(() => {
     setData((d) => {
       if (!d) return d;
-      const w = wakeScheduled(d);
-      const d2 = w ? { ...d, records: { ...d.records, ...w } } : d;
+      let d2 = d;
+      const look = upgradeLook(d2);
+      if (look) d2 = { ...d2, categories: { ...d2.categories, ...look.categories }, accounts: { ...d2.accounts, ...look.accounts } };
+      const up = upgradeRecords(d2);
+      if (up) d2 = { ...d2, records: { ...d2.records, ...up.records }, repeats: { ...d2.repeats, ...up.repeats } };
+      if (!d2.upgraded12) {
+        const back = d2.onboarded ? unpayAutoCounted(d2) : null;
+        d2 = { ...d2, upgraded12: true, records: back ? { ...d2.records, ...back } : d2.records };
+      }
       const m = materialise(d2);
       return m ? { ...d2, records: { ...d2.records, ...m.records }, repeats: { ...d2.repeats, ...m.repeats } } : d2;
     });
   }, []);
+  const hydrated = !!data;
+  useEffect(() => { if (hydrated) setTimeout(runRepeats, 0); }, [hydrated]);
 
   /* ------------------------------ Rates ------------------------------ */
   const home = data ? data.homeCurrency : 'NZD';
@@ -204,16 +241,20 @@ export function AppProvider({ children }) {
     const rate = !foreign ? 1 : draft.rateManual ? Number(draft.rate) : savedRate(draft.date, currency, d.homeCurrency) || Number(draft.rate) || 1;
     const type = draft.type || 'expense';
     const statusDefault = { expense: 'paid', income: 'received', transfer: 'paid', iowe: 'open', owed: 'open' }[type];
-    let status = old && old.type === type ? old.status : statusDefault;
-    if (old && old.status === 'pending' && (type === 'expense' || type === 'income' || type === 'transfer')) status = old.status;
-    // A date after today waits as Scheduled and counts for nothing until then.
-    if (type === 'expense' || type === 'income' || type === 'transfer') {
-      if (draft.date > todayYmd()) status = 'scheduled';
-      else if (status === 'scheduled') status = statusDefault;
+    const isMoney = type === 'expense' || type === 'income' || type === 'transfer';
+    let status = old && (old.type === type || (isMoney && ['expense', 'income', 'transfer'].includes(old.type))) ? old.status : statusDefault;
+    // Upcoming: a later date, or "not paid yet" ticked. It counts for nothing
+    // until it's marked paid. Paid ones keep their status when edited.
+    if (isMoney) {
+      const was = old && (old.status === 'pending' || old.status === 'scheduled');
+      if (draft.upcoming === true || draft.date > todayYmd() || (was && draft.upcoming !== false)) status = 'pending';
+      else if (status !== 'skipped') status = statusDefault;
     }
+    const fields = { ...draft };
+    delete fields.upcoming;
     const rec = {
       ...(old || {}),
-      ...draft,
+      ...fields,
       id,
       type,
       kind: type === 'iowe' || type === 'owed' ? draft.kind || defaultKind(type) : null,
@@ -306,7 +347,7 @@ export function AppProvider({ children }) {
     if (!prev) return;
     const next = { ...prev, status: 'settled', settledDate: date || todayYmd(), settledAccountId: accountId || prev.accountId, updatedAt: now() };
     setData((cur) => ({ ...cur, records: { ...cur.records, [id]: next } }));
-    showToast(prev.type === 'iowe' ? 'Marked paid' : 'Marked received', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
+    showToast(prev.type === 'iowe' ? 'Marked paid back' : 'Marked got it back', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
   }, [showToast, restore]);
 
   const reopenRecord = useCallback((id) => {
@@ -317,15 +358,40 @@ export function AppProvider({ children }) {
     });
   }, []);
 
-  const confirmPending = useCallback((id, { amount, accountId } = {}) => {
+  // Upcoming -> paid. Counts from its own date, or from today when that's
+  // still to come.
+  const confirmPending = useCallback((id, { amount, accountId, date } = {}) => {
     const d = dataRef.current;
     const prev = d.records[id];
     if (!prev) return;
+    const t = todayYmd();
     const status = prev.type === 'income' ? 'received' : 'paid';
-    const next = { ...prev, status, amount: amount !== undefined ? round2(Number(amount)) : prev.amount, accountId: accountId || prev.accountId, updatedAt: now() };
-    setData((cur) => ({ ...cur, records: { ...cur.records, [id]: next } }));
-    showToast(prev.type === 'income' ? 'Marked received' : 'Marked paid', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
+    const next = {
+      ...prev, status, date: date || (prev.date > t ? t : prev.date), amount: amount !== undefined && Number(amount) > 0 ? round2(Number(amount)) : prev.amount,
+      accountId: accountId || prev.accountId, confirmedAt: now(), updatedAt: now(),
+    };
+    setData((cur) => {
+      const askLater = { ...(cur.askLater || {}) };
+      delete askLater[id];
+      return { ...cur, askLater, records: { ...cur.records, [id]: next } };
+    });
+    showToast(prev.type === 'income' ? 'Marked received' : prev.type === 'transfer' ? 'Marked moved' : 'Marked paid', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
   }, [showToast, restore]);
+  const markPaid = confirmPending;
+
+  // Paid by mistake: back to Upcoming, out of the balance.
+  const unpay = useCallback((id) => {
+    const d = dataRef.current;
+    const prev = d.records[id];
+    if (!prev) return;
+    setData((cur) => ({ ...cur, records: { ...cur.records, [id]: { ...prev, status: 'pending', confirmedAt: null, updatedAt: now() } } }));
+    showToast('Back in Upcoming. Not counted.', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
+  }, [showToast, restore]);
+
+  // "Not yet" on Home: ask again tomorrow.
+  const askLater = useCallback((id) => {
+    setData((cur) => ({ ...cur, askLater: { ...(cur.askLater || {}), [id]: todayYmd() } }));
+  }, []);
 
   const skipPending = useCallback((id) => {
     const d = dataRef.current;
@@ -640,7 +706,7 @@ export function AppProvider({ children }) {
   const value = useMemo(() => ({
     data, hydrated: !!data, update, theme, flows, money, second, homePerUnit, ratesVersion, refreshRates,
     toast, setToast, showToast, locked, tryUnlock, syncing, pendingOpen, setPendingOpen,
-    saveRecord, deleteRecord, settleRecord, reopenRecord, confirmPending, skipPending, duplicateRecord,
+    saveRecord, deleteRecord, settleRecord, reopenRecord, confirmPending, markPaid, unpay, askLater, skipPending, duplicateRecord,
     saveCategory, deleteCategory, saveAccount, deleteAccount, saveBudget, deleteBudget, saveGoal, deleteGoal, saveRepeat, deleteRepeat,
     applyImport, restoreData, syncNow, backupNow, signInGoogle, signOutGoogle, runRepeats, addPhoto, removePhoto,
   }), [data, theme, flows, money, second, homePerUnit, ratesVersion, toast, locked, syncing, pendingOpen]);

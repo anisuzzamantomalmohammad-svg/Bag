@@ -1,10 +1,12 @@
 // Add or change an account: name, currency and the opening balance. An
 // account with records can be deleted once they're moved to another one.
 import React, { useMemo, useRef, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, Field, Row, Screen, T, useTheme } from '../ui/kit';
+import { Bubble, Button, Card, Field, Row, Screen, Squish, T, useTheme } from '../ui/kit';
+import { accountKind } from '../lib/look';
+import { ACCOUNT_KINDS } from '../data/defaults';
 import { RecordRow } from '../ui/parts';
 import { accountBalance, filterRecords, live } from '../lib/ledger';
 import { fmtDate, today } from '../lib/dates';
@@ -21,6 +23,7 @@ export default function AccountEdit({ id }) {
   const [currency, setCurrency] = useState(old ? old.currency : data.homeCurrency);
   const [opening, setOpening] = useState(old && Number(old.opening) ? String(old.opening) : '');
   const [openingDate, setOpeningDate] = useState(old ? old.openingDate || null : today());
+  const [kind, setKind] = useState(old ? accountKind(old) : 'bank');
   const [err, setErr] = useState('');
   const dirty = useRef(false);
   const touch = (fn) => (v) => { dirty.current = true; setErr(''); fn(v); };
@@ -35,7 +38,7 @@ export default function AccountEdit({ id }) {
     const o = opening.trim() ? parseAmount(opening) : 0;
     if (Number.isNaN(o)) { setErr('Opening balance should be a number'); return; }
     const changedCur = old && old.currency !== currency;
-    app.saveAccount({ id: old ? old.id : undefined, name: n, currency, opening: o, openingDate: openingDate || today(), ...(changedCur || !old ? { openingRateManual: false } : {}) });
+    app.saveAccount({ id: old ? old.id : undefined, name: n, kind, currency, opening: o, openingDate: openingDate || today(), ...(changedCur || !old ? { openingRateManual: false } : {}) });
     app.showToast(old ? 'Saved' : `${n} added`);
     nav.pop();
   };
@@ -64,10 +67,22 @@ export default function AccountEdit({ id }) {
       {old ? (
         <Card>
           <T size={13} color={th.muted}>Balance now</T>
-          <T size={28} weight="semi" color={bal.native < 0 ? th.out : th.ink}>{app.money(bal.native, { currency: old.currency })}</T>
+          <T size={32} serif color={bal.native < 0 ? th.out : th.ink}>{app.money(bal.native, { currency: old.currency })}</T>
           {old.currency !== data.homeCurrency ? <T size={13} color={th.faint}>≈ {app.money(bal.home)} {data.homeCurrency}</T> : null}
         </Card>
       ) : null}
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        {Object.keys(ACCOUNT_KINDS).map((k) => {
+          const K = ACCOUNT_KINDS[k];
+          const on = kind === k;
+          return (
+            <Squish key={k} onPress={() => { dirty.current = true; setKind(k); }} accessibilityRole="radio" accessibilityLabel={K.label} style={{ flex: 1, alignItems: 'center', gap: 6, paddingVertical: 10, borderRadius: 18, backgroundColor: on ? th.card : 'transparent', borderWidth: 1.5, borderColor: on ? K.color : 'transparent' }}>
+              <Bubble emoji={K.emoji} color={K.color} size={40} />
+              <T size={12.5} weight="medium" color={on ? th.ink : th.muted}>{K.label}</T>
+            </Squish>
+          );
+        })}
+      </View>
       <Field label="Name" value={name} onChangeText={touch(setName)} placeholder="Cash, ANZ, Savings" autoFocus={!old} autoCapitalize="words" />
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
         <Row first label="Currency" value={`${currency} · ${currencyName(currency)}`} sub={old && recs.length ? 'Fixed once the account has records' : undefined} onPress={old && recs.length ? undefined : () => nav.openSheet('currency', { value: currency, onPick: touch(setCurrency) })} />

@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import { Alert, Pressable, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, Chip, Chips, Field, Icon, IconBox, Row, Screen, Seg, T, Toggle, useTheme } from '../ui/kit';
+import { Bubble, Button, Card, Chip, Chips, Field, Icon, Row, Screen, Seg, T, Toggle, useTheme } from '../ui/kit';
+import { catColor } from '../lib/look';
 import { RecordRow } from '../ui/parts';
 import { describe, lastAmount, nextDates } from '../lib/repeats';
 import { addDays, dow, fmtDate, fmtShort, ordinal, parseYmd, today, DAY_NAMES } from '../lib/dates';
@@ -48,7 +49,6 @@ export default function RepeatEdit({ id, draftRule, start: draftStart, type: dra
   const [endDate, setEndDate] = useState((src.end && src.end.date) || addDays(start, 365));
   const [endCount, setEndCount] = useState(Number(src.end && src.end.count) || 12);
   const money = t.type === 'expense' || t.type === 'income' || t.type === 'transfer' || !t.type;
-  const [confirm, setConfirm] = useState(src.confirm !== undefined ? !!src.confirm : t.type !== 'transfer');
   const [amountMode, setAmountMode] = useState(src.amountMode || 'same');
   const [paused, setPaused] = useState(!!(rep && rep.paused));
   const [amount, setAmount] = useState(rep ? String(t.amount || '') : '');
@@ -60,7 +60,7 @@ export default function RepeatEdit({ id, draftRule, start: draftStart, type: dra
     weekdays: freq === 'week' ? weekdays : undefined,
     monthDay: freq === 'month' ? monthDay : undefined,
     end: endType === 'date' ? { type: 'date', date: endDate } : endType === 'count' ? { type: 'count', count: endCount } : { type: 'never' },
-    confirm: money ? confirm : false,
+    confirm: money,
     amountMode,
   };
   const from = rep ? (today() > start ? addDays(today(), 1) : start) : start;
@@ -78,7 +78,7 @@ export default function RepeatEdit({ id, draftRule, start: draftStart, type: dra
     app.showToast(paused ? 'Repeat paused' : 'Repeat saved');
     nav.pop();
   };
-  const stop = () => Alert.alert('Stop this repeat?', 'Records it already made stay. Ones waiting to be confirmed and bills not due yet are removed.', [
+  const stop = () => Alert.alert('Stop this repeat?', 'Ones already paid stay. Ones still in Upcoming are removed.', [
     { text: 'Cancel', style: 'cancel' },
     { text: 'Stop', style: 'destructive', onPress: () => { nav.pop(); setTimeout(() => app.deleteRepeat(rep.id), 220); } },
   ]);
@@ -87,7 +87,7 @@ export default function RepeatEdit({ id, draftRule, start: draftStart, type: dra
     <Screen title={rep ? t.name || 'Repeat' : 'Custom repeat'} footer={<Button label={rep ? 'Save' : 'Done'} onPress={save} />}>
       {rep ? (
         <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <IconBox emoji={t.type === 'transfer' ? '🔀' : cat && !cat.deleted ? cat.emoji : '🔁'} />
+          <Bubble emoji={t.type === 'transfer' ? '🔀' : cat && !cat.deleted ? cat.emoji : '🔁'} color={cat && !cat.deleted ? catColor(cat) : undefined} size={40} />
           <View style={{ flex: 1 }}>
             <T weight="medium">{t.name || 'Repeat'}</T>
             <T size={13} color={th.faint}>{paused ? 'Paused' : describe({ ...rule, start })}</T>
@@ -144,14 +144,14 @@ export default function RepeatEdit({ id, draftRule, start: draftStart, type: dra
       </Card>
 
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
-        {money ? <Row first label="Ask me to confirm" sub="Each one waits as Pending until you say it happened" right={<Toggle value={confirm} onChange={setConfirm} label="Ask me to confirm" />} /> : <Row first label="Bills are added 14 days early" sub="So the reminder can go off. They wait as Open until you mark them paid." />}
+        <Row first label="Nothing counts by itself" sub={money ? 'Each one waits in Upcoming until you mark it paid. Home asks on the day.' : 'Each one is added 14 days early and waits in Upcoming, under People.'} />
         <View style={{ paddingVertical: 12, borderTopWidth: 1, borderTopColor: th.line, gap: 8 }}>
           <T>Amount</T>
-          <Seg small items={[{ id: 'same', label: 'Same each time' }, { id: 'last', label: 'Last confirmed' }]} value={amountMode} onChange={setAmountMode} />
-          <T size={13} color={th.faint}>{amountMode === 'last' ? 'Good for pay that changes: the next one starts at whatever you confirmed last.' : 'Every one starts at the same amount.'}</T>
+          <Seg small items={[{ id: 'same', label: 'Same each time' }, { id: 'last', label: 'Last paid' }]} value={amountMode} onChange={setAmountMode} />
+          <T size={13} color={th.faint}>{amountMode === 'last' ? 'Good for pay that changes: the next one starts at whatever you marked paid last.' : 'Every one starts at the same amount.'}</T>
         </View>
         {rep ? <Row label="Amount" right={<Field value={amount} onChangeText={setAmount} keyboardType="decimal-pad" inputStyle={{ minHeight: 40, minWidth: 110, textAlign: 'right', paddingHorizontal: 0, backgroundColor: 'transparent' }} accessibilityLabel="Amount" />} /> : null}
-        {rep && amountMode === 'last' ? <Row label="Last confirmed" value={app.money(lastAmount(data, rep), { currency: t.currency })} /> : null}
+        {rep && amountMode === 'last' ? <Row label="Last paid" value={app.money(lastAmount(data, rep), { currency: t.currency })} /> : null}
         {rep ? <Row label="Pause" sub="Nothing new is made while it's paused" right={<Toggle value={paused} onChange={setPaused} label="Pause" />} /> : null}
       </Card>
 

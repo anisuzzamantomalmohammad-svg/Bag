@@ -4,14 +4,16 @@ import React, { useState } from 'react';
 import { Alert, Linking, Pressable, View } from 'react-native';
 import { useApp, DEFAULTS } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, Field, Icon, Label, Row, Screen, Seg, Sheet, T, Toggle, useTheme } from '../ui/kit';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { Bubble, Button, Card, Field, Icon, Label, Row, Screen, Seg, Sheet, Squish, T, Toggle, useTheme } from '../ui/kit';
+import { accountColor, accountEmoji } from '../lib/look';
 import { initials } from './Home';
 import { currencyName } from '../data/currencies';
 import { fmtDate, ordinal, ymd } from '../lib/dates';
 import { canLock } from '../lib/lock';
 import { askPermission, ensureChannel } from '../lib/reminders';
 import { googleConfigured, listBackups, downloadBackup } from '../lib/google';
-import { TYPE_LABEL, liveRecords, live } from '../lib/ledger';
+import { TYPE_LABEL, accountBalance, liveRecords, live } from '../lib/ledger';
 import { ACCENTS } from '../data/defaults';
 import { fmt } from '../lib/money';
 
@@ -150,18 +152,19 @@ export default function Settings({ section }) {
     })) : [],
     reminders: [
       { key: 'on', words: 'reminders notifications', node: (f) => <Row first={f} label="Reminders" right={<Toggle value={data.reminders.on !== false} onChange={toggleReminders} label="Reminders" />} /> },
-      data.reminders.on !== false ? { key: 'days', words: 'bill reminder days before due', node: (f) => <Row first={f} label="Bills I owe" value={(BILL_DAYS.find((x) => x[0] === Number(data.reminders.billDays)) || BILL_DAYS[2])[1]} onPress={() => choose('Remind me about bills', BILL_DAYS, Number(data.reminders.billDays), (v) => set('reminders', { billDays: v }))} /> } : null,
+      data.reminders.on !== false ? { key: 'days', words: 'bill reminder days before due', node: (f) => <Row first={f} label="Bills, ahead of time" value={(BILL_DAYS.find((x) => x[0] === Number(data.reminders.billDays)) || BILL_DAYS[2])[1]} onPress={() => choose('Remind me about bills', BILL_DAYS, Number(data.reminders.billDays), (v) => set('reminders', { billDays: v }))} /> } : null,
       data.reminders.on !== false ? { key: 'time', words: 'reminder time morning', node: (f) => <Row first={f} label="At" value={timeLabel(data.reminders.time || '09:00')} onPress={() => choose('Reminder time', TIMES.map((t) => [t, timeLabel(t)]), data.reminders.time, (v) => set('reminders', { time: v }))} /> } : null,
-      data.reminders.on !== false ? { key: 'rep', words: 'repeats confirm pending', node: (f) => <Row first={f} label="Repeats to confirm" sub="Like “Did your salary arrive?”" right={<Toggle value={data.reminders.repeats !== false} onChange={(v) => set('reminders', { repeats: v })} label="Repeats to confirm" />} /> } : null,
-      data.reminders.on !== false ? { key: 'owed', words: 'owed to me due', node: (f) => <Row first={f} label="Money owed to me" sub="On the day it's due" right={<Toggle value={data.reminders.owed !== false} onChange={(v) => set('reminders', { owed: v })} label="Money owed to me" />} /> } : null,
+      data.reminders.on !== false ? { key: 'rep', words: 'repeats confirm pending', node: (f) => <Row first={f} label="Did you pay it?" sub="On the day something Upcoming is due" right={<Toggle value={data.reminders.repeats !== false} onChange={(v) => set('reminders', { repeats: v })} label="Did you pay it?" />} /> } : null,
+      data.reminders.on !== false ? { key: 'owed', words: 'owed to me due', node: (f) => <Row first={f} label="Money I lent" sub="On the day it's due back" right={<Toggle value={data.reminders.owed !== false} onChange={(v) => set('reminders', { owed: v })} label="Money I lent" />} /> } : null,
     ],
     look: [
       { key: 'theme', words: 'dark mode light theme appearance', node: (f) => (
         <View style={{ paddingVertical: 12, borderTopWidth: f ? 0 : 1, borderTopColor: th.line, gap: 8 }}>
           <T>Theme</T>
-          <Seg small items={[{ id: 'auto', label: 'Phone' }, { id: 'light', label: 'Light' }, { id: 'dark', label: 'Dark' }]} value={data.themeMode} onChange={(v) => update({ themeMode: v })} />
+          <Seg small items={[{ id: 'dark', label: 'Dark' }, { id: 'light', label: 'Light' }, { id: 'auto', label: 'Phone' }]} value={data.themeMode} onChange={(v) => update({ themeMode: v })} />
         </View>
       ) },
+      { key: 'anim', words: 'animations motion swipe 3d reduce', node: (f) => <Row first={f} label="Animations" sub="3D swipe between tabs, drawing lines, springy buttons" right={<Toggle value={data.animations !== false} onChange={(v) => update({ animations: v })} label="Animations" />} /> },
       { key: 'accent', words: 'accent colour color slate blue teal purple pink', node: (f) => (
         <View style={{ paddingVertical: 12, borderTopWidth: f ? 0 : 1, borderTopColor: th.line, gap: 10 }}>
           <T>Colour</T>
@@ -216,7 +219,7 @@ export default function Settings({ section }) {
       { key: 'dec', words: 'decimals cents numbers', node: (f) => <Row first={f} label="Decimals" value={Number(data.numbers.decimals) === 0 ? `None · ${fmt(SAMPLE, { decimals: 0 })}` : `Two · ${fmt(SAMPLE)}`} onPress={() => choose('Decimals', [[2, `Two · ${fmt(SAMPLE)}`], [0, `None · ${fmt(SAMPLE, { decimals: 0 })}`]], Number(data.numbers.decimals), (v) => set('numbers', { decimals: v }))} /> },
       { key: 'neg', words: 'negative minus brackets numbers', node: (f) => <Row first={f} label="Negative amounts" value={fmt(SAMPLE, { negative: data.numbers.negative })} onPress={() => choose('Negative amounts', [['minus', fmt(SAMPLE, { negative: 'minus' })], ['brackets', fmt(SAMPLE, { negative: 'brackets' })]], data.numbers.negative, (v) => set('numbers', { negative: v }))} /> },
       { key: 'mcol', words: 'money colours green red blue orange', node: (f) => <Row first={f} label="Cash in and out colours" value={data.moneyColours === 'blueOrange' ? 'Blue and orange' : 'Green and red'} onPress={() => choose('Cash in and out colours', [['greenRed', 'Green and red'], ['blueOrange', 'Blue and orange']], data.moneyColours, (v) => update({ moneyColours: v }))} /> },
-      { key: 'dtype', words: 'new records start as default type', node: (f) => <Row first={f} label="New records start as" value={TYPE_LABEL[data.defaults.type] || 'Expense'} onPress={() => choose('New records start as', Object.entries(TYPE_LABEL), data.defaults.type, (v) => set('defaults', { type: v }))} /> },
+      { key: 'dtype', words: 'new records start as default type', node: (f) => <Row first={f} label="New records start as" value={TYPE_LABEL[data.defaults.type] || 'Cash out'} onPress={() => choose('New records start as', Object.entries(TYPE_LABEL), data.defaults.type, (v) => set('defaults', { type: v }))} /> },
       { key: 'dacc', words: 'default account new records', node: (f) => <Row first={f} label="Account for new records" value={data.defaults.account === 'last' ? 'Last one used' : (data.accounts[data.defaults.account] || {}).name || 'Last one used'} onPress={() => choose('Account for new records', [['last', 'Last one used'], ...live(data.accounts).map((a) => [a.id, a.name])], data.defaults.account, (v) => set('defaults', { account: v }))} /> },
       { key: 'fill', words: 'fill category from name suggestions', node: (f) => <Row first={f} label="Fill in the category" sub="When you pick a name you've used before" right={<Toggle value={data.defaults.fillCategory !== false} onChange={(v) => set('defaults', { fillCategory: v })} label="Fill in the category" />} /> },
       { key: 'reset', words: 'reset look colours defaults', node: (f) => <Row first={f} label={<T color={th.danger}>Reset look and defaults</T>} chevron={false} onPress={() => Alert.alert('Reset look and defaults?', 'Your records stay as they are.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Reset', onPress: () => update({ homeCards: DEFAULTS.homeCards, themeMode: DEFAULTS.themeMode, accent: DEFAULTS.accent, moneyColours: DEFAULTS.moneyColours, textSize: DEFAULTS.textSize, defaults: DEFAULTS.defaults, numbers: DEFAULTS.numbers }) }])} /> },
@@ -235,6 +238,29 @@ export default function Settings({ section }) {
 
   return (
     <Screen title="Settings">
+      {!only && !searching ? (
+        <Squish onPress={() => nav.push('accounts')} accessibilityLabel="Accounts" style={{ borderRadius: 24, overflow: 'hidden', backgroundColor: th.card, padding: 16 }}>
+          <Svg style={{ position: 'absolute', top: 0, left: 0 }} width="100%" height="100%" pointerEvents="none">
+            <Defs><LinearGradient id="stg" x1="0" y1="0" x2="1" y2="1"><Stop offset="0" stopColor="#7FB2F0" stopOpacity={0.18} /><Stop offset="1" stopColor="#B79CF0" stopOpacity={0.1} /></LinearGradient></Defs>
+            <Rect x="0" y="0" width="100%" height="100%" fill="url(#stg)" />
+          </Svg>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <T size={13} color={th.muted}>Accounts</T>
+            <Icon name="chevron-right" size={18} color={th.faint} />
+          </View>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+            {live(data.accounts).sort((a, b) => (a.order || 0) - (b.order || 0)).slice(0, 4).map((a) => {
+              const b = accountBalance(data, a, { flows: app.flows, homePerUnit: app.homePerUnit });
+              return (
+                <View key={a.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: '45%' }}>
+                  <Bubble emoji={accountEmoji(a)} color={accountColor(a)} size={34} />
+                  <View><T size={13} color={th.muted}>{a.name}</T><T size={15} weight="semi" color={b.native < 0 ? th.out : th.ink}>{app.money(b.native, { currency: a.currency })}</T></View>
+                </View>
+              );
+            })}
+          </View>
+        </Squish>
+      ) : null}
       {!only ? <Field value={q} onChangeText={setQ} placeholder="Search settings" autoCorrect={false} /> : null}
       {sections.map(([k, title]) => (
         <React.Fragment key={k}>
