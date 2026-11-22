@@ -12,10 +12,10 @@ import { Amount, Bubble, Card, Chip, DaysRing, Empty, Icon, Row, Squish, T, useT
 import { TabTint } from '../ui/parts';
 import { Calendar } from '../ui/calendar';
 import { Section, comingRow } from './Home';
-import { accountBalance, comingUp, daysUntil, displayName, itemEffect, itemRecord, live, upcomingUntil, upcomingWords } from '../lib/ledger';
+import { accountBalance, comingUp, daysUntil, displayName, isOpen, isPending, itemEffect, itemRecord, live, upcomingUntil, upcomingWords } from '../lib/ledger';
 import { describe, nextDate } from '../lib/repeats';
 import { DAY_NAMES, addDays, fmtDate, fmtShort, lastDayOfMonth, parseYmd, periodOf, today } from '../lib/dates';
-import { catColor } from '../lib/look';
+import { accountEmoji, alpha, catColor } from '../lib/look';
 
 const FILTERS = [['all', 'All'], ['out', 'Cash out'], ['in', 'Cash in'], ['people', 'People'], ['repeats', 'Repeats']];
 
@@ -86,6 +86,9 @@ export default function Upcoming({ nonce, filter: startFilter }) {
     if (it.record) nav.push('record', { id: it.record.id });
     else if (it.repeat) nav.push('repeat', { id: it.repeat.id });
   };
+  // A row: ring with days left, name, amount. Tap for Paid / Skip and the
+  // details; hold to change it.
+  const [openKey, setOpenKey] = useState(null);
   const rowFor = (it) => {
     const row = comingRow(it, data);
     const r = itemRecord(it);
@@ -93,15 +96,44 @@ export default function Upcoming({ nonce, filter: startFilter }) {
     const due = it.kind === 'due' || it.kind === 'owedToMe' ? r.dueDate : it.date;
     const days = due ? daysUntil(now, due) : null;
     const emoji = r.type === 'transfer' ? '🔀' : cat && !cat.deleted ? cat.emoji : it.kind === 'owedToMe' || it.kind === 'due' ? '🤝' : '🏷️';
+    const isOpenRow = openKey === it.key;
+    const rec = it.record;
+    const acc = data.accounts[r.accountId];
+    const rep = r.repeatId ? data.repeats[r.repeatId] : it.repeat;
+    const tags = [fmtShort(due || it.date, { weekday: true }), rep && !rep.deleted ? `🔁 ${describe(rep)}` : null, acc ? `${accountEmoji(acc)} ${acc.name}` : null, cat && !cat.deleted ? `${cat.emoji} ${cat.name}` : null].filter(Boolean);
+    const hold = () => { if (rec) nav.openSheet('change', { id: rec.id }); else if (it.repeat) nav.push('repeat', { id: it.repeat.id }); };
+    const btn = (label, go, strong) => (
+      <Pressable key={label} onPress={go} accessibilityRole="button" style={{ flex: 1, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: strong ? th.warnBtn : th.soft }}>
+        <T size={13} weight={strong ? 'semi' : 'medium'} color={strong ? th.warnBtnInk : th.muted}>{label}</T>
+      </Pressable>
+    );
+    const acts = [];
+    if (rec && isPending(rec)) {
+      acts.push(btn(rec.type === 'income' ? 'Got it' : rec.type === 'transfer' ? 'Moved' : 'Paid', () => { setOpenKey(null); app.markPaid(rec.id); }, true));
+      if (rec.repeatId) acts.push(btn('Skip this one', () => { setOpenKey(null); app.skipPending(rec.id); }));
+    }
+    if (rec && isOpen(rec)) acts.push(btn(rec.type === 'iowe' ? 'Paid back' : 'Got it back', () => nav.openSheet('settle', { id: rec.id }), true));
+    acts.push(btn('Open', () => open(it)));
     return (
-      <Squish key={it.key} onPress={() => open(it)} accessibilityLabel={`${row.name}, ${app.money(row.value)}, ${row.sub}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 9 }}>
-        {days !== null && days > 0 ? <DaysRing days={days} color={catColor(cat)} /> : <Bubble emoji={emoji} color={catColor(cat)} />}
-        <View style={{ flex: 1 }}>
-          <T numberOfLines={1}>{row.name}</T>
-          <T size={12.5} color={row.tone === 'warn' ? th.warn : th.faint} numberOfLines={1}>{days !== null && days < 0 ? `${fmtShort(due, { weekday: true })} · ${-days} ${days === -1 ? 'day' : 'days'} late` : row.sub}</T>
-        </View>
-        <Amount value={row.value} kind={row.kind} currency={row.currency} />
-      </Squish>
+      <View key={it.key} style={{ borderRadius: 16, marginTop: 6, backgroundColor: isOpenRow ? th.card : alpha(catColor(cat), 0.06) }}>
+        <Squish onPress={() => setOpenKey(isOpenRow ? null : it.key)} onLongPress={hold} delayLongPress={350} accessibilityLabel={`${row.name}, ${app.money(row.value)}, ${row.sub}. Tap for Paid, hold to change`} style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 9, paddingHorizontal: 10 }}>
+          <Bubble emoji={emoji} color={catColor(cat)} size={36} />
+          <View style={{ flex: 1 }}>
+            <T size={14.5} numberOfLines={1}>{row.name}</T>
+            <T size={11.5} color={row.tone === 'warn' ? th.warn : th.faint} numberOfLines={1}>{days !== null && days < 0 ? `${-days} ${days === -1 ? 'day' : 'days'} late` : fmtShort(due || it.date, { weekday: true })}</T>
+          </View>
+          <Amount value={row.value} kind={row.kind} currency={row.currency} size={14} />
+          {days !== null && days > 0 ? <DaysRing days={days} color={catColor(cat)} /> : null}
+        </Squish>
+        {isOpenRow ? (
+          <View style={{ paddingHorizontal: 10, paddingBottom: 10, gap: 8 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingLeft: 47 }}>
+              {tags.map((t) => <View key={t} style={{ backgroundColor: th.soft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }}><T size={11.5} color={th.muted}>{t}</T></View>)}
+            </View>
+            <View style={{ flexDirection: 'row', gap: 6 }}>{acts}</View>
+          </View>
+        ) : null}
+      </View>
     );
   };
 
@@ -133,6 +165,7 @@ export default function Upcoming({ nonce, filter: startFilter }) {
     return Array.from({ length: 21 }, (_, i) => { const d = addDays(now, i); return { d, dot: dots[d] }; });
   }, [data.records, data.repeats]);
   const [stripDay, setStripDay] = useState(null);
+  const [cardOpen, setCardOpen] = useState(false);
   const stripItems = stripDay ? comingUp(data, { days: Math.max(0, daysUntil(now, stripDay)), now, people: false }).filter((it) => (it.date < now ? now : it.date) === stripDay) : [];
 
   const after = balance + ahead.total;
@@ -148,16 +181,19 @@ export default function Upcoming({ nonce, filter: startFilter }) {
         </Squish>
       </View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 + insets.bottom }}>
-        <View style={{ borderRadius: 26, padding: 18, marginTop: 8, overflow: 'hidden', borderWidth: 1, borderColor: th.roseBorder }}>
+        <View style={{ borderRadius: 24, padding: 16, marginTop: 8, overflow: 'hidden', borderWidth: 1, borderColor: th.roseBorder }}>
           <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
             <Defs><LinearGradient id="rose" x1="0" y1="0" x2="1" y2="1"><Stop offset="0" stopColor={th.roseA} /><Stop offset="1" stopColor={th.roseB} /></LinearGradient></Defs>
             <Rect x="0" y="0" width="100%" height="100%" fill="url(#rose)" />
           </Svg>
-          <Pressable onPress={() => nav.setTab('Home')} accessibilityRole="button" accessibilityLabel={`By ${fmtShort(monthEnd)} you'll have ${app.money(after)}`}>
-            <T size={12} color={th.muted} style={{ letterSpacing: 0.8 }}>BY {fmtShort(monthEnd).toUpperCase()} YOU'LL HAVE</T>
-            <T size={42} serif color={after < 0 ? th.out : th.ink} style={{ lineHeight: 50 }}>{app.money(after)}</T>
-            <T size={13} color={th.muted}>{app.money(balance)} now{ahead.count ? `, after ${upcomingWords(ahead, data, app.money)}` : ', nothing else due this month'}</T>
+          <Pressable onPress={() => setCardOpen(!cardOpen)} accessibilityRole="button" accessibilityState={{ expanded: cardOpen }} accessibilityLabel={`By ${fmtShort(monthEnd)} you'll have ${app.money(after)}. Tap for the next 3 weeks`} style={{ alignItems: 'center' }}>
+            <T size={10.5} color={th.muted} style={{ letterSpacing: 1.2 }}>BY {fmtShort(monthEnd).toUpperCase()} YOU'LL HAVE</T>
+            <T size={36} serif color={after < 0 ? th.out : th.ink} style={{ lineHeight: 44 }}>{app.money(after)}</T>
+            {cardOpen ? <T size={12.5} color={th.muted} center>{app.money(balance)} now{ahead.count ? `, after ${upcomingWords(ahead, data, app.money)}` : ', nothing else due this month'}</T>
+              : <T size={11} color={th.faint}>Tap for the next 3 weeks</T>}
           </Pressable>
+          {cardOpen ? (
+          <>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14, marginHorizontal: -6 }} contentContainerStyle={{ gap: 4, paddingHorizontal: 6 }}>
             {strip.map(({ d, dot }) => {
               const sel = stripDay ? stripDay === d : d === now;
@@ -177,16 +213,17 @@ export default function Upcoming({ nonce, filter: startFilter }) {
                 : <T size={13} color={th.faint}>Nothing due {fmtDate(stripDay, { weekday: true, year: false })}</T>}
             </View>
           ) : null}
-        </View>
-
         {toPay.length ? (
-          <View style={{ marginTop: 18 }}>
+          <View style={{ marginTop: 12 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><T size={13} color={th.muted}>Still to pay this month</T><T size={13} color={th.muted}>{app.money(ahead.out)}</T></View>
             <View style={{ flexDirection: 'row', height: 12, borderRadius: 6, overflow: 'hidden', gap: 3, marginTop: 8 }}>
               {toPay.map((it) => { const rec = itemRecord(it); return <View key={it.key} style={{ flex: Math.abs(itemEffect(it)), backgroundColor: catColor(data.categories[rec.categoryId]), opacity: it.date < now ? 1 : 0.6, borderRadius: 3 }} />; })}
             </View>
           </View>
         ) : null}
+          </>
+          ) : null}
+        </View>
 
         {view === 'list' ? (
           <>

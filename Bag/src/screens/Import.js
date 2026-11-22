@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Button, Card, Row, Screen, T, useTheme } from '../ui/kit';
+import { Button, Card, Row, Screen, T, Toggle, useTheme } from '../ui/kit';
 import { pickExcel } from '../lib/files';
 import { planImport } from '../lib/excel';
 import { totalBalance } from '../lib/ledger';
@@ -17,6 +17,12 @@ export default function Import() {
   const [file, setFile] = useState(null);
   const [plan, setPlan] = useState(null);
   const [err, setErr] = useState('');
+  // Replace: plan against an empty Bag (same accounts and categories, no
+  // records, no opening balances), so nothing is skipped as already there.
+  const [replace, setReplace] = useState(false);
+  const [rows, setRows] = useState(null);
+  const blank = () => ({ ...app.data, records: {}, accounts: Object.fromEntries(Object.entries(app.data.accounts).map(([k, a]) => [k, a && !a.deleted ? { ...a, opening: 0, openingDate: null } : a])) });
+  const planFor = (r, rep) => planImport(rep ? blank() : app.data, r);
 
   const choose = async () => {
     setErr('');
@@ -24,7 +30,9 @@ export default function Import() {
     try {
       const f = await pickExcel();
       if (!f) return;
-      const p = planImport(app.data, { rows: f.rows, format: f.format });
+      const r = { rows: f.rows, format: f.format };
+      const p = planFor(r, replace);
+      setRows(r);
       setFile(f);
       setPlan(p);
     } catch (e) {
@@ -37,7 +45,9 @@ export default function Import() {
     }
   };
 
+  const setRep = (v) => { setReplace(v); if (rows) setPlan(planFor(rows, v)); };
   const n = plan ? Object.keys(plan.records).length : 0;
+  const have = Object.values(app.data.records).filter((r) => r && !r.deleted).length;
   const c = plan ? plan.counts : {};
   const before = plan ? totalBalance(app.data, { flows: app.flows, homePerUnit: app.homePerUnit }) : 0;
   const after = plan ? totalBalance(plan.after, { homePerUnit: app.homePerUnit }) : 0;
@@ -46,12 +56,12 @@ export default function Import() {
   ].filter(([, v]) => v) : [];
 
   return (
-    <Screen title="Import from Excel" footer={plan && (n || c.opening) ? <Button label={`Import ${n} ${n === 1 ? 'record' : 'records'}`} onPress={() => { app.applyImport(plan); nav.pop(); }} /> : null}>
+    <Screen title="Import from Excel" footer={plan && (n || c.opening) ? <Button label={replace ? `Replace with ${n} ${n === 1 ? 'record' : 'records'}` : `Import ${n} ${n === 1 ? 'record' : 'records'}`} kind={replace ? 'amber' : 'primary'} onPress={() => { app.applyImport(plan, { replace }); nav.pop(); }} /> : null}>
       {!plan ? (
         <Card>
           <T weight="semi">Bring records in from a spreadsheet</T>
           <T size={14} color={th.muted} style={{ marginTop: 6 }}>Bag reads its own Excel export, and simple cash books with Date, Cash in, Cash out and Notes columns. Names that match a category go there. New categories and accounts are made for the rest, and you can rename them after.</T>
-          <T size={14} color={th.muted} style={{ marginTop: 6 }}>Nothing changes until you check the numbers and tap Import. Rows already in Bag are skipped.</T>
+          <T size={14} color={th.muted} style={{ marginTop: 6 }}>Nothing changes until you check the numbers and tap Import. Rows already in Bag are skipped, unless you choose to replace all your records.</T>
         </Card>
       ) : (
         <>
@@ -60,6 +70,9 @@ export default function Import() {
             {lines.map(([l, v], i) => <Row key={l} first={i === 0} minHeight={46} label={l} value={String(v)} />)}
             {c.duplicates ? <Row minHeight={46} label="Already in Bag, skipped" value={String(c.duplicates)} /> : null}
             {c.skipped ? <Row minHeight={46} label="Rows Bag couldn't read" value={String(c.skipped)} valueColor={th.warn} /> : null}
+          </Card>
+          <Card pad={0} style={{ paddingHorizontal: 16 }}>
+            <Row first label="Replace all my records" sub={replace ? `Your ${have} records now are removed and this file takes their place. Undo brings them back.` : 'Off: only rows not already in Bag are added'} right={<Toggle value={replace} onChange={setRep} label="Replace all my records" />} chevron={false} />
           </Card>
           {plan.newAccounts.length || plan.newCategories.length ? (
             <Card pad={0} style={{ paddingHorizontal: 16 }}>

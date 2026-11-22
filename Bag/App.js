@@ -45,6 +45,7 @@ const STACK_SCREENS = {
   repeat: () => require('./src/screens/RepeatEdit').default,
   budget: () => require('./src/screens/BudgetEdit').default,
   goal: () => require('./src/screens/GoalEdit').default,
+  breakdown: () => require('./src/screens/Breakdown').default,
 };
 
 // Add slides up from the bottom like a sheet; everything else slides in

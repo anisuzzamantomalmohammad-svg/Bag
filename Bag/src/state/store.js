@@ -21,6 +21,9 @@ import { PERSIST_KEY } from '../lib/background';
 import { refreshWidget } from '../widget/update';
 import { dropPhoto, keepPhoto } from '../lib/photos';
 
+export const BACKUP_KEY = '@bag:before-update';
+const APP_VERSION = require('../../app.json').expo.version;
+
 const now = () => Date.now();
 
 export const DEFAULTS = {
@@ -139,6 +142,12 @@ export function AppProvider({ children }) {
       try {
         const raw = await AsyncStorage.getItem(PERSIST_KEY);
         d = raw ? withDefaults(JSON.parse(raw)) : initialData();
+        // First open after an update: keep a copy of everything as it was,
+        // before any upgrade step touches it. Settings can bring it back.
+        if (raw && d.appVersion !== APP_VERSION) {
+          await AsyncStorage.setItem(BACKUP_KEY, JSON.stringify({ at: now(), from: d.appVersion || 'older', raw })).catch(() => {});
+          d = { ...d, appVersion: APP_VERSION };
+        } else if (!raw) d = { ...d, appVersion: APP_VERSION };
       } catch (e) {
         d = initialData();
       }
@@ -316,6 +325,44 @@ export function AppProvider({ children }) {
   const restore = useCallback((prevRecords) => {
     setData((cur) => ({ ...cur, records: { ...cur.records, ...Object.fromEntries(Object.entries(prevRecords).map(([k, v]) => [k, { ...v, updatedAt: now() }])) } }));
   }, []);
+
+  // Change several records at once (account, category, date), with Undo.
+  // A transfer keeps its own accounts; a category only goes on records of
+  // the same kind (spending categories on spending, income on income).
+  const patchRecords = useCallback((ids, patch, message) => {
+    const d = dataRef.current;
+    const prev = {};
+    const next = {};
+    ids.forEach((id) => {
+      const r = d.records[id];
+      if (!r || r.deleted) return;
+      const p = { ...patch };
+      if (r.type === 'transfer') { delete p.accountId; delete p.categoryId; }
+      if (p.categoryId) {
+        const c = d.categories[p.categoryId];
+        const want = r.type === 'income' ? 'income' : 'expense';
+        if (!c || (c.kind || 'expense') !== want) delete p.categoryId;
+      }
+      if (!Object.keys(p).length) return;
+      prev[id] = r;
+      next[id] = { ...r, ...p, updatedAt: now() };
+    });
+    const n = Object.keys(next).length;
+    if (!n) { showToast('Nothing to change there'); return 0; }
+    setData((cur) => ({ ...cur, records: { ...cur.records, ...next } }));
+    showToast(message ? message(n) : `${n} changed`, { label: 'Undo', onPress: () => restore(prev) });
+    return n;
+  }, [showToast, restore]);
+
+  const deleteRecords = useCallback((ids) => {
+    const d = dataRef.current;
+    const prev = {};
+    ids.forEach((id) => { if (d.records[id] && !d.records[id].deleted) prev[id] = d.records[id]; });
+    const n = Object.keys(prev).length;
+    if (!n) return;
+    setData((cur) => ({ ...cur, records: { ...cur.records, ...Object.fromEntries(Object.keys(prev).map((x) => [x, tomb(x)])) } }));
+    showToast(`${n} deleted`, { label: 'Undo', onPress: () => restore(prev) });
+  }, [showToast, restore]);
 
   const deleteRecord = useCallback((id, { silent, extra } = {}) => {
     const d = dataRef.current;
@@ -520,7 +567,9 @@ export function AppProvider({ children }) {
   }, [showToast]);
 
   /* ------------------------------ Import and restore ------------------------------ */
-  const applyImport = useCallback((plan) => {
+  // replace: the file becomes your records. Everything there now is
+  // removed first (Undo brings it all back).
+  const applyImport = useCallback((plan, { replace } = {}) => {
     const strip = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => { const { isNew, ...rest } = v; return [k, rest]; }));
     const before = dataRef.current;
     const undo = () => setData((cur) => {
@@ -528,20 +577,26 @@ export function AppProvider({ children }) {
       const back = (coll, added) => {
         const next = { ...cur[coll] };
         Object.keys(added).forEach((k) => { next[k] = before[coll][k] ? { ...before[coll][k], updatedAt: t } : tomb(k); });
+        if (replace && coll !== 'categories') Object.keys(before[coll]).forEach((k) => { if (!added[k]) next[k] = { ...before[coll][k], updatedAt: t }; });
         return next;
       };
       return { ...cur, records: back('records', plan.records), accounts: back('accounts', plan.accounts), categories: back('categories', plan.categories) };
     });
-    setData((cur) => ({
-      ...cur,
-      accounts: { ...cur.accounts, ...strip(plan.accounts) },
-      categories: { ...cur.categories, ...strip(plan.categories) },
-      records: { ...cur.records, ...plan.records },
-      lastAccountId: cur.lastAccountId || Object.keys(plan.accounts)[0] || null,
-    }));
+    setData((cur) => {
+      const t = now();
+      const gone = replace ? Object.fromEntries(Object.keys(cur.records).filter((k) => !cur.records[k].deleted && !plan.records[k]).map((k) => [k, tomb(k)])) : {};
+      const resetOpen = replace ? Object.fromEntries(Object.values(cur.accounts).filter((a) => a && !a.deleted && !plan.accounts[a.id] && Number(a.opening)).map((a) => [a.id, { ...a, opening: 0, openingDate: null, updatedAt: t }])) : {};
+      return {
+        ...cur,
+        accounts: { ...cur.accounts, ...resetOpen, ...strip(plan.accounts) },
+        categories: { ...cur.categories, ...strip(plan.categories) },
+        records: { ...cur.records, ...gone, ...plan.records },
+        lastAccountId: cur.lastAccountId || Object.keys(plan.accounts)[0] || null,
+      };
+    });
     const foreign = Object.values(plan.records).filter((r) => r.rateCheck).map((r) => r.id);
     if (foreign.length) setTimeout(() => fillRate(foreign), 100);
-    showToast(`Imported ${Object.keys(plan.records).length} records`, { label: 'Undo', onPress: undo });
+    showToast(replace ? `Replaced with ${Object.keys(plan.records).length} records` : `Imported ${Object.keys(plan.records).length} records`, { label: 'Undo', onPress: undo });
   }, [fillRate, showToast]);
 
   // Replace everything that syncs with a backup (settings on this phone stay).
@@ -706,7 +761,7 @@ export function AppProvider({ children }) {
   const value = useMemo(() => ({
     data, hydrated: !!data, update, theme, flows, money, second, homePerUnit, ratesVersion, refreshRates,
     toast, setToast, showToast, locked, tryUnlock, syncing, pendingOpen, setPendingOpen,
-    saveRecord, deleteRecord, settleRecord, reopenRecord, confirmPending, markPaid, unpay, askLater, skipPending, duplicateRecord,
+    saveRecord, deleteRecord, patchRecords, deleteRecords, settleRecord, reopenRecord, confirmPending, markPaid, unpay, askLater, skipPending, duplicateRecord,
     saveCategory, deleteCategory, saveAccount, deleteAccount, saveBudget, deleteBudget, saveGoal, deleteGoal, saveRepeat, deleteRepeat,
     applyImport, restoreData, syncNow, backupNow, signInGoogle, signOutGoogle, runRepeats, addPhoto, removePhoto,
   }), [data, theme, flows, money, second, homePerUnit, ratesVersion, toast, locked, syncing, pendingOpen]);

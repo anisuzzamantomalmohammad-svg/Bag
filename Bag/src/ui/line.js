@@ -9,9 +9,11 @@ import { useTheme, F } from './kit';
 import { daysUntil } from '../lib/ledger';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
-const H = 180;
 
-export default function BalanceLine({ line, ticks = [], onScrub, money, motion = true }) {
+// period: also draw a second line that starts at 0 (just this week or month).
+// details: show the figures on the line. onTap: a tap without dragging.
+export default function BalanceLine({ line, ticks = [], onScrub, money, motion = true, period = false, details = false, onTap, height }) {
+  const H = height || 180;
   const th = useTheme();
   const [w, setW] = useState(0);
   const draw = useRef(new Animated.Value(0)).current;
@@ -30,6 +32,7 @@ export default function BalanceLine({ line, ticks = [], onScrub, money, motion =
       return padL + (d / span) * (w - padL - padR);
     };
     const all = [...line.pts, ...line.fut].map((p) => p.v);
+    if (period) [...line.pts, ...line.fut].forEach((p) => all.push(p.v - line.start));
     let lo = Math.min(0, ...all);
     let hi = Math.max(...all);
     const sp = hi - lo || 1;
@@ -42,9 +45,11 @@ export default function BalanceLine({ line, ticks = [], onScrub, money, motion =
     for (let i = 1; i < pastXY.length; i += 1) len += Math.hypot(pastXY[i][0] - pastXY[i - 1][0], pastXY[i][1] - pastXY[i - 1][1]);
     const lastXY = pastXY.length ? pastXY[pastXY.length - 1] : futXY[0];
     const area = pastXY.length ? `${path(pastXY)} L${lastXY[0]} ${y(lo)} L${pastXY[0][0]} ${y(lo)} Z` : '';
+    const p2XY = period ? line.pts.map((p, i) => [pastXY[i][0], y(p.v - line.start)]) : [];
+    const f2XY = period ? line.fut.map((p, i) => [futXY[i][0], y(p.v - line.start)]) : [];
     const targets = [...line.pts.map((p, i) => ({ ...p, x: pastXY[i][0], y: pastXY[i][1] })), ...line.fut.map((p, i) => ({ ...p, x: futXY[i][0], y: futXY[i][1] })).filter((p) => p.pin)];
-    return { padL, padR, top, bot, y, xOf, pastXY, futXY, path, len: Math.max(1, len), lastXY, area, lo, targets, span };
-  }, [w, line]);
+    return { padL, padR, top, bot, y, xOf, pastXY, futXY, p2XY, f2XY, path, len: Math.max(1, len), lastXY, area, lo, targets, span };
+  }, [w, line, period, H]);
 
   useEffect(() => {
     if (!g) return;
@@ -60,18 +65,24 @@ export default function BalanceLine({ line, ticks = [], onScrub, money, motion =
     return best;
   };
   const lastPick = useRef(null);
+  const scrubbing = useRef(false);
+  const startX = useRef(0);
+  const stop = () => { lastPick.current = null; scrubbing.current = false; setHover(null); onScrub && onScrub(null); };
   const pan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
-    onPanResponderTerminationRequest: () => false,
-    onPanResponderGrant: (e) => { const p = pick(e.nativeEvent.locationX); lastPick.current = p; setHover(p); onScrub && onScrub(p); },
-    onPanResponderMove: (e) => {
+    onPanResponderTerminationRequest: () => !scrubbing.current,
+    onPanResponderGrant: (e) => { startX.current = e.nativeEvent.locationX; scrubbing.current = false; },
+    onPanResponderMove: (e, gs) => {
+      // A drag scrubs; a tap (no real movement) shows or hides the details.
+      if (!scrubbing.current && Math.abs(gs.dx) < 5) return;
+      scrubbing.current = true;
       const p = pick(e.nativeEvent.locationX);
       if (p && p !== lastPick.current) { lastPick.current = p; setHover(p); onScrub && onScrub(p); if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {}); }
     },
-    onPanResponderRelease: () => { lastPick.current = null; setHover(null); onScrub && onScrub(null); },
-    onPanResponderTerminate: () => { lastPick.current = null; setHover(null); onScrub && onScrub(null); },
-  }), [g]);
+    onPanResponderRelease: () => { const was = scrubbing.current; stop(); if (!was && onTap) onTap(); },
+    onPanResponderTerminate: stop,
+  }), [g, onTap]);
 
   const endV = line.end;
   const endXY = g ? g.futXY[g.futXY.length - 1] : [0, 0];
@@ -99,13 +110,23 @@ export default function BalanceLine({ line, ticks = [], onScrub, money, motion =
             <AnimatedPath d={g.path(g.pastXY)} stroke="url(#lg)" strokeWidth={2.6} fill="none" strokeLinecap="round" strokeLinejoin="round"
               strokeDasharray={`${g.len} ${g.len}`} strokeDashoffset={draw.interpolate({ inputRange: [0, 1], outputRange: [g.len, 0] })} />
           ) : null}
+          {period && g.p2XY.length > 1 ? <Path d={g.path(g.p2XY)} stroke={th.lineP || '#B79CF0'} strokeWidth={2.2} fill="none" strokeLinejoin="round" strokeLinecap="round" /> : null}
+          {period && g.f2XY.length > 1 ? <Path d={g.path(g.f2XY)} stroke={th.lineP || '#B79CF0'} strokeOpacity={0.55} strokeWidth={1.8} fill="none" strokeDasharray="2 6" strokeLinecap="round" /> : null}
+          {period && g.p2XY.length ? <Circle cx={g.p2XY[g.p2XY.length - 1][0]} cy={g.p2XY[g.p2XY.length - 1][1]} r={4} fill={th.lineP || '#B79CF0'} /> : null}
           <Path d={g.path(g.futXY)} stroke={futColor} strokeWidth={2.2} fill="none" strokeLinecap="round" strokeDasharray="2 6" />
-          {line.fut.length > 1 ? (
-            <G>
-              <Circle cx={endXY[0]} cy={endXY[1]} r={4} fill={futColor} />
-              <SvgText x={endXY[0] - 4} y={endXY[1] - 9} fontSize={11} fontFamily={F.semi} textAnchor="end" fill={endV < 0 ? th.out : th.muted}>{money(endV)}</SvgText>
-            </G>
-          ) : null}
+          {line.fut.length > 1 ? <Circle cx={endXY[0]} cy={endXY[1]} r={4} fill={futColor} /> : null}
+          {details && line.fut.length > 1 ? (() => {
+            // Keep the end figure clear of today's dot.
+            const near = Math.abs(endXY[0] - g.lastXY[0]) < 70 && Math.abs(endXY[1] - g.lastXY[1]) < 22;
+            return <SvgText x={w - 4} y={near ? endXY[1] + 20 : endXY[1] - 10} fontSize={11} fontFamily={F.semi} textAnchor="end" fill={endV < 0 ? th.out : th.muted}>{money(endV)}</SvgText>;
+          })() : null}
+          {details && period && g.f2XY.length ? (() => {
+            const e2 = g.f2XY[g.f2XY.length - 1];
+            const v2 = line.fut[line.fut.length - 1].v - line.start;
+            return <SvgText x={w - 4} y={e2[1] + 16} fontSize={11} fontFamily={F.semi} textAnchor="end" fill={th.lineP || '#B79CF0'}>{v2 >= 0 ? '+' : ''}{money(v2)}</SvgText>;
+          })() : null}
+          {g.pastXY.length ? <Circle cx={g.pastXY[0][0]} cy={g.y(line.start)} r={4} fill={th.warn} /> : null}
+          {details && g.pastXY.length ? <SvgText x={g.pastXY[0][0] + 7} y={g.y(line.start) - 8} fontSize={11} fontFamily={F.semi} fill={th.warn}>{money(line.start)}</SvgText> : null}
           {line.fut.map((p, i) => (p.pin ? (
             <G key={`pin${i}`}>
               <Circle cx={g.futXY[i][0]} cy={g.futXY[i][1] + 16} r={11} fill={th.pinBg} stroke={p.color || th.warn} strokeWidth={1.2} />

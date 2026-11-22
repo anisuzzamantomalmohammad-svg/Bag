@@ -8,7 +8,7 @@ import Svg, { Circle, Defs, Line, LinearGradient, Polyline, RadialGradient, Rect
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '../state/store';
 import { Bubble, F, Squish, T, useTheme } from './kit';
-import { accountEmoji, catColor } from '../lib/look';
+import { accountEmoji, alpha, catColor } from '../lib/look';
 import { fmtShort } from '../lib/dates';
 import { displayName, isOpen, isPending, kindOf, statusOf } from '../lib/ledger';
 import { useNav } from '../nav';
@@ -82,10 +82,15 @@ export function PlusButton({ onPress }) {
 export function TabTint({ tab }) {
   const th = useTheme();
   const c = (th.tints || {})[tab] || th.bg;
+  const two = tab === 'Home' && th.glowA;
   return (
-    <Svg pointerEvents="none" style={[StyleSheet.absoluteFill, { height: 420 }]} width="100%" height={420}>
-      <Defs><RadialGradient id={`tint${tab}`} cx="50%" cy="-6%" rx="80%" ry="55%" fx="50%" fy="-6%"><Stop offset="0" stopColor={c} stopOpacity="1" /><Stop offset="1" stopColor={th.bg} stopOpacity="0" /></RadialGradient></Defs>
-      <Rect x="0" y="0" width="100%" height="420" fill={`url(#tint${tab})`} />
+    <Svg pointerEvents="none" style={[StyleSheet.absoluteFill, { height: 460 }]} width="100%" height={460}>
+      <Defs>
+        <RadialGradient id={`tint${tab}`} cx="50%" cy="-6%" rx="80%" ry="55%" fx="50%" fy="-6%"><Stop offset="0" stopColor={two ? th.glowA : c} stopOpacity={two ? (th.mode === 'dark' ? 0.2 : 0.16) : 1} /><Stop offset="1" stopColor={th.bg} stopOpacity="0" /></RadialGradient>
+        {two ? <RadialGradient id="tintB" cx="100%" cy="30%" rx="70%" ry="40%" fx="100%" fy="30%"><Stop offset="0" stopColor={th.glowB} stopOpacity={th.mode === 'dark' ? 0.14 : 0.12} /><Stop offset="1" stopColor={th.bg} stopOpacity="0" /></RadialGradient> : null}
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="460" fill={`url(#tint${tab})`} />
+      {two ? <Rect x="0" y="0" width="100%" height="460" fill="url(#tintB)" /> : null}
     </Svg>
   );
 }
@@ -181,29 +186,62 @@ export function useRecordActions() {
   return { remove, menu };
 }
 
-// A record row. Tap to open it; press and hold for Edit, Duplicate, Delete.
-export function RecordRow({ record, onPress, showDate, first }) {
+// A record row: emoji, name, amount. Tap it for the details (category,
+// account, day) and Open; hold it to change it (account, category, day) or
+// select several. In select mode a tap ticks it instead.
+export function RecordRow({ record, onPress, showDate, first, select, onSelectStart }) {
   const th = useTheme();
+  const nav = useNav();
   const { data, money } = useApp();
-  const { menu } = useRecordActions();
+  const [open, setOpen] = useState(false);
   const amt = recordAmount(record);
   const color = amt.muted ? th.faint : amt.kind === 'in' ? th.in : amt.kind === 'out' ? th.out : th.ink;
   const st = statusOf(record);
   const overdue = st === 'Overdue';
   const upcoming = isPending(record);
-  const sub = [showDate ? fmtShort(record.date, { weekday: true }) : null, recordSub(record, data)].filter(Boolean).join(' · ');
   const name = displayName(record, data);
   const cat = data.categories[record.categoryId];
+  const picking = select && select.mode;
+  const on = picking && select.on;
+  const tags = [];
+  if (showDate || open) tags.push(fmtShort(record.date, { weekday: true }));
+  const details = open ? recordSub(record, data).split(' · ').filter(Boolean) : [];
+  const hold = () => {
+    if (picking) { select.toggle(record.id); return; }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    nav.openSheet('change', { id: record.id, onSelect: onSelectStart });
+  };
   return (
-    <View>
-      <Squish onPress={onPress} onLongPress={() => menu(record)} delayLongPress={350} accessibilityLabel={`${name}, ${money(amt.value, { currency: record.currency })}. Press and hold for more`} style={{ minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 8 }}>
-        <Bubble emoji={recordEmoji(record, data.categories)} color={record.type === 'transfer' ? '#AFC6DE' : catColor(cat)} />
-        <View style={{ flex: 1 }}>
-          <T numberOfLines={1} color={upcoming ? th.muted : undefined}>{name}</T>
-          {sub ? <T size={13} color={overdue || upcoming ? th.warn : th.faint} numberOfLines={1}>{sub}</T> : null}
+    <View style={{ borderRadius: 16, backgroundColor: open || on ? th.card : 'transparent', marginHorizontal: -8, paddingHorizontal: 8 }}>
+      <Squish onPress={() => (picking ? select.toggle(record.id) : setOpen(!open))} onLongPress={hold} delayLongPress={350}
+        accessibilityLabel={`${name}, ${money(amt.value, { currency: record.currency })}. ${picking ? (on ? 'Selected' : 'Not selected') : 'Tap for details, hold to change'}`}
+        style={{ minHeight: 50, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 6 }}>
+        <View>
+          <Bubble emoji={recordEmoji(record, data.categories)} color={record.type === 'transfer' ? '#AFC6DE' : catColor(cat)} size={36} />
+          {picking ? (
+            <View style={{ position: 'absolute', inset: 0, top: 0, left: 0, right: 0, bottom: 0, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? th.chipOn : 'rgba(0,0,0,0.25)', borderWidth: on ? 0 : 1.5, borderColor: th.lineStrong }}>
+              {on ? <Feather name="check" size={18} color={th.chipOnInk} /> : null}
+            </View>
+          ) : null}
         </View>
-        <T weight="medium" color={color}>{money(amt.value, { currency: record.currency, plus: amt.kind === 'in' })}</T>
+        <View style={{ flex: 1 }}>
+          <T size={14.5} numberOfLines={1} color={upcoming ? th.muted : undefined}>{name}</T>
+          {showDate && !open ? <T size={11.5} color={th.faint}>{tags[0]}</T> : null}
+          {upcoming && !open ? <T size={11.5} color={overdue ? th.warn : th.faint}>{overdue ? 'Overdue · not paid yet' : 'Upcoming'}</T> : null}
+        </View>
+        <T size={14.5} weight="medium" color={color}>{money(amt.value, { currency: record.currency, plus: amt.kind === 'in' })}</T>
       </Squish>
+      {open && !picking ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingLeft: 47, paddingBottom: 10, alignItems: 'center' }}>
+          {[...details, tags[0]].map((t, i) => <View key={i} style={{ backgroundColor: th.soft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }}><T size={11.5} color={th.muted}>{t}</T></View>)}
+          {record.description ? <View style={{ backgroundColor: th.soft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, maxWidth: '100%' }}><T size={11.5} color={th.muted} numberOfLines={2}>📝 {record.description}</T></View> : null}
+          {onPress ? (
+            <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Open ${name}`} hitSlop={6} style={{ backgroundColor: alpha(th.chipOn, 0.16), borderRadius: 8, paddingHorizontal: 9, paddingVertical: 4 }}>
+              <T size={11.5} weight="semi" color={th.chipOn}>Open ›</T>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }

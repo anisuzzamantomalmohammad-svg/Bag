@@ -12,7 +12,7 @@ import { IconButton, RecordRow, TabTint } from '../ui/parts';
 import { effectiveDate, filterRecords, flowsOf, isPending, live } from '../lib/ledger';
 import { MONTHS_LONG, addMonths, fmtDate, lastDayOfMonth, parseYmd, periodOf, today } from '../lib/dates';
 import { round2 } from '../lib/money';
-import { alpha, catColor } from '../lib/look';
+import { accountColor, accountEmoji, alpha, catColor, tint } from '../lib/look';
 import { rangeLabel } from './Sheets';
 
 const TYPES = [['all', 'Everything'], ['expense', 'Cash out'], ['income', 'Cash in'], ['transfer', 'Move'], ['people', 'People'], ['upcoming', 'Upcoming']];
@@ -111,6 +111,34 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
   const wholeMonth = from && to && from.slice(8) === '01' && to === lastDayOfMonth(from.slice(0, 7));
   const stepMonth = (n) => { const f = addMonths(from, n, 1); setFrom(f); setTo(lastDayOfMonth(f.slice(0, 7))); setDayPick(null); };
   const [cal, setCal] = useState(false);
+  const [more, setMore] = useState(false);
+  // Select mode: hold a record, pick Select, tick others, change them together.
+  const [picked, setPicked] = useState(null);
+  const toggle = (id) => setPicked((cur) => { const n = { ...(cur || {}) }; if (n[id]) delete n[id]; else n[id] = true; return n; });
+  const startSelect = (id) => setPicked({ [id]: true });
+  const ids = picked ? Object.keys(picked) : [];
+  const exitSelect = () => setPicked(null);
+  const selTotal = useMemo(() => ids.reduce((t, id) => { const r = data.records[id]; if (!r || r.deleted) return t; const a = (Number(r.amount) || 0) * (Number(r.rate) || 1); return t + (r.type === 'income' ? a : r.type === 'expense' ? -a : 0); }, 0), [picked, data.records]);
+  const accsAll = live(data.accounts).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const moveTo = (aid) => { app.patchRecords(ids, { accountId: aid }, (n) => `${n} moved to ${data.accounts[aid].name}`); exitSelect(); };
+  const selMore = () => nav.openSheet('choice', {
+    title: `${ids.length} picked`,
+    options: [
+      { id: 'cat', label: 'Change category', emoji: '🏷️' },
+      { id: 'date', label: 'Move to a day', emoji: '🗓️' },
+      ...(accsAll.length > 2 ? [{ id: 'acc', label: 'Move to an account', emoji: '🏦' }] : []),
+      { id: 'del', label: 'Delete', emoji: '🗑' },
+    ],
+    onPick: (k) => setTimeout(() => {
+      if (k === 'cat') {
+        const first = data.records[ids[0]];
+        nav.openSheet('category', { kind: first && first.type === 'income' ? 'income' : 'expense', onPick: (cid) => { app.patchRecords(ids, { categoryId: cid }, (n) => `${n} now in ${data.categories[cid].name}`); exitSelect(); } });
+      }
+      if (k === 'date') nav.openSheet('date', { value: today(), onPick: (d) => { app.patchRecords(ids, { date: d }, (n) => `${n} moved to ${fmtDate(d, { weekday: true, year: false })}`); exitSelect(); } });
+      if (k === 'acc') nav.openSheet('account', { onPick: moveTo });
+      if (k === 'del') { app.deleteRecords(ids); exitSelect(); }
+    }, 250),
+  });
   const [dayPick, setDayPick] = useState(null);
   const listRef = useRef(null);
 
@@ -146,32 +174,42 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
       {query ? (
         <T size={13} color={th.muted} style={{ marginHorizontal: 4 }}>Searching all dates</T>
       ) : (
-        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: th.card, borderRadius: 20, padding: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 4 }}>
           {wholeMonth ? <IconButton name="chevron-left" label="Month before" onPress={() => stepMonth(-1)} /> : <View style={{ width: 44 }} />}
-          <Pressable onPress={() => nav.openSheet('range', { from, to, onPick: (a, b) => { setFrom(a); setTo(b); setDayPick(null); } })} accessibilityRole="button" accessibilityLabel={`Dates: ${rangeLabel(from, to)}. Tap to pick months or dates`} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 40 }}>
-            <T serif size={wholeMonth ? 21 : 16}>{wholeMonth ? `${MONTHS_LONG[parseYmd(from).getMonth()]} ${from.slice(0, 4)}` : rangeLabel(from, to)}</T>
+          <Pressable onPress={() => nav.openSheet('range', { from, to, onPick: (a, b) => { setFrom(a); setTo(b); setDayPick(null); } })} accessibilityRole="button" accessibilityLabel={`Dates: ${rangeLabel(from, to)}. Tap to pick months or dates`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 36, paddingHorizontal: 14, borderRadius: 12, backgroundColor: th.card }}>
+            <T serif size={wholeMonth ? 18 : 15}>{wholeMonth ? `${MONTHS_LONG[parseYmd(from).getMonth()]} ${from.slice(0, 4)}` : rangeLabel(from, to)}</T>
             <Icon name="chevron-down" size={16} color={th.faint} />
           </Pressable>
           {wholeMonth && to < today() ? <IconButton name="chevron-right" label="Next month" onPress={() => stepMonth(1)} /> : <View style={{ width: 44 }} />}
         </View>
       )}
-      <View style={{ paddingHorizontal: 2 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Pressable onPress={() => setCounts(counts === 'income' ? null : 'income')} accessibilityRole="button" accessibilityLabel="Show cash in only" hitSlop={6}>
-            <T size={14} color={th.in} weight={counts === 'income' ? 'semi' : 'regular'}>▲ {app.money(totals.income, { plus: true })} in</T>
-          </Pressable>
-          <T size={13} color={th.faint}>{dayPick ? fmtDate(dayPick, { weekday: true, year: false }) : net ? `Net ${app.money(net, { plus: net > 0 })}` : ''}</T>
-          <Pressable onPress={() => setCounts(counts === 'expense' ? null : 'expense')} accessibilityRole="button" accessibilityLabel="Show cash out only" hitSlop={6}>
-            <T size={14} color={th.out} weight={counts === 'expense' ? 'semi' : 'regular'}>▼ {app.money(-totals.expense)} out</T>
-          </Pressable>
+      <Pressable onPress={() => setMore(!more)} accessibilityRole="button" accessibilityState={{ expanded: more }} accessibilityLabel={`Cash in ${totals.income}, cash out ${totals.expense}. Tap for more`} style={{ alignItems: 'center', paddingVertical: 2 }}>
+        <T size={13}>
+          <T size={13} color={th.in}>▲ {app.money(totals.income)}</T>
+          <T size={13} color={th.faint}>   ·   </T>
+          <T size={13} color={th.out}>▼ {app.money(totals.expense)}</T>
+        </T>
+        {!more ? <T size={10.5} color={th.faint} style={{ marginTop: 2 }}>{dayPick ? fmtDate(dayPick, { weekday: true, year: false }) : 'Tap for the split and categories'}</T> : null}
+      </Pressable>
+      {more ? (
+        <View style={{ paddingHorizontal: 2, gap: 8 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Pressable onPress={() => setCounts(counts === 'income' ? null : 'income')} accessibilityRole="button" accessibilityLabel="Show cash in only" hitSlop={6}>
+              <T size={12.5} color={th.in} weight={counts === 'income' ? 'semi' : 'regular'}>Cash in only</T>
+            </Pressable>
+            <T size={12.5} color={th.faint}>{net ? `Net ${app.money(net, { plus: net > 0 })}` : ''}</T>
+            <Pressable onPress={() => setCounts(counts === 'expense' ? null : 'expense')} accessibilityRole="button" accessibilityLabel="Show cash out only" hitSlop={6}>
+              <T size={12.5} color={th.out} weight={counts === 'expense' ? 'semi' : 'regular'}>Cash out only</T>
+            </Pressable>
+          </View>
+          <View style={{ flexDirection: 'row', height: 6, borderRadius: 3, overflow: 'hidden', gap: 3 }}>
+            <View style={{ flex: Math.max(totals.income, 0.001), backgroundColor: th.in }} />
+            <View style={{ flex: Math.max(totals.expense, 0.001), backgroundColor: th.out }} />
+          </View>
         </View>
-        <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', gap: 3, marginTop: 8 }}>
-          <View style={{ flex: Math.max(totals.income, 0.001), backgroundColor: th.in }} />
-          <View style={{ flex: Math.max(totals.expense, 0.001), backgroundColor: th.out }} />
-        </View>
-      </View>
+      ) : null}
       {cal && heat ? <HeatMonth from={from} to={to} heat={heat} pick={dayPick} onPick={jumpTo} ws={data.weekStart === 0 ? 0 : data.weekStart || 1} /> : null}
-      {usedCats.length > 1 ? (
+      {usedCats.length > 1 && (more || categoryId) ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -16 }} contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }}>
           <CatChip label="All" on={!categoryId} onPress={() => setCategoryId(null)} />
           {usedCats.map((k) => { const c = data.categories[k]; return <CatChip key={k} label={c.name} color={catColor(c)} on={categoryId === k} onPress={() => setCategoryId(categoryId === k ? null : k)} />; })}
@@ -203,19 +241,27 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
           ) : null}
         </Card>
       ) : null}
-      <T size={12} color={th.faint} style={{ marginHorizontal: 4 }}>{list.length} {list.length === 1 ? 'record' : 'records'}{list.some(isPending) ? " · Upcoming isn't counted until it's paid" : ''}</T>
+      {more ? <T size={11.5} color={th.faint} center>{list.length} {list.length === 1 ? 'record' : 'records'}{list.some(isPending) ? " · Upcoming isn't counted until it's paid" : ''} · hold one to change it</T> : null}
     </View>
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: th.bg }}>
       <TabTint tab="Records" />
+      {picked ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: insets.top + 10, paddingBottom: 6, gap: 8 }}>
+          <RoundIcon name="x" label="Stop selecting" onPress={exitSelect} />
+          <T size={20} serif style={{ flex: 1, textAlign: 'center' }}>{ids.length ? `${ids.length} picked` : 'Tap to pick'}</T>
+          <Squish onPress={() => setPicked(Object.fromEntries(list.map((r) => [r.id, true])))} accessibilityLabel="Pick all shown" style={{ height: 40, paddingHorizontal: 12, borderRadius: 14, backgroundColor: th.soft, justifyContent: 'center' }}><T size={13} weight="medium">All</T></Squish>
+        </View>
+      ) : (
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 10, paddingTop: insets.top + 10, paddingBottom: 6 }}>
-        <T size={28} serif style={{ flex: 1 }}>Records</T>
+        <T size={26} serif style={{ flex: 1 }}>Records</T>
         {wholeMonth ? <RoundIcon name="calendar" on={cal} label={cal ? 'Hide the month calendar' : 'Show the month calendar'} onPress={() => setCal(!cal)} /> : null}
         <RoundIcon name={searching ? 'x' : 'search'} label={searching ? 'Close search' : 'Search'} onPress={() => { setSearching(!searching); if (searching) setQ(''); }} />
         <RoundIcon name="sliders" on={filterOpen || !!active} label={active ? `Filter, ${active} on` : 'Filter'} onPress={() => setFilterOpen(!filterOpen)} />
       </View>
+      )}
       <FlatList
         ref={listRef}
         data={days}
@@ -244,7 +290,7 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
                 <T size={12.5} weight={hl ? 'semi' : 'regular'} color={hl ? th.ink : th.muted}>{fmtDate(item.date, { weekday: true, year: item.date.slice(0, 4) !== today().slice(0, 4) })}</T>
                 {dayNet ? <T size={12.5} color={th.faint}>{dayNet > 0 ? '▲' : '▼'} {app.money(round2(dayNet), { plus: dayNet > 0 })}</T> : null}
               </View>
-              {item.records.map((r, i) => <RecordRow key={r.id} record={r} first={i === 0} onPress={() => nav.push('record', { id: r.id })} />)}
+              {item.records.map((r, i) => <RecordRow key={r.id} record={r} first={i === 0} onPress={() => nav.push('record', { id: r.id })} select={picked ? { mode: true, on: !!picked[r.id], toggle } : null} onSelectStart={startSelect} />)}
               {item.openings.map((a) => (
                 <Squish key={a.id} onPress={() => nav.push('account', { id: a.id })} accessibilityLabel={`Opening balance of ${a.name}`} style={{ minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 8 }}>
                   <Bubble emoji="🏁" color="#9AA7B6" />
@@ -259,6 +305,24 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
           );
         }}
       />
+      {picked ? (
+        <View style={{ position: 'absolute', left: 12, right: 12, bottom: insets.bottom + 86, backgroundColor: th.mode === 'dark' ? '#1E2733' : '#FFFFFF', borderRadius: 22, padding: 12, gap: 10, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 12, zIndex: 30 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <T size={13} color={th.muted}><T size={13} weight="semi">{ids.length}</T> picked</T>
+            <T size={13} weight="semi" color={selTotal < 0 ? th.out : th.in}>{app.money(selTotal, { plus: selTotal > 0 })}</T>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {accsAll.slice(0, 2).map((a) => (
+              <Squish key={a.id} onPress={() => ids.length && moveTo(a.id)} accessibilityLabel={`Move picked to ${a.name}`} style={{ flex: 1, height: 44, borderRadius: 14, backgroundColor: alpha(accountColor(a), 0.18), flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: ids.length ? 1 : 0.4 }}>
+                <T size={15}>{accountEmoji(a)}</T><T size={13.5} weight="medium" color={tint(accountColor(a), th.mode === 'dark' ? 0.25 : -0.35)}>To {a.name}</T>
+              </Squish>
+            ))}
+            <Squish onPress={() => ids.length && selMore()} accessibilityLabel="More for picked" style={{ width: 70, height: 44, borderRadius: 14, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: ids.length ? 1 : 0.4 }}>
+              <T size={13.5} weight="medium" color={th.muted}>More</T>
+            </Squish>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }

@@ -51,27 +51,30 @@ HOW TO BUILD THE BAG APK
    Google sign-in only works in builds signed with that keystore. Don't
    create new build credentials, or sign-in breaks.
 
-CHECK ON THE PHONE AFTER INSTALLING 2.0
-(2.0 has everything from 1.2 too, so you can skip 1.2.)
-1. Tabs: Home, Records, Upcoming, Reports, with + in the middle. Swipe
-   left or right to change tab. Settings > Look > Animations turns the
-   3D swipe and other motion off.
-2. Home: tap All, Bank or Cash at the top. The number, the line, the tiles
-   and the dotted forecast switch to that one. Drag along the line to see
-   any day. The rent pin sits on the dotted part.
-3. +: type on the keypad. Out, In, Move, People. Tap the category pill for
-   the coloured grid. "Paid from" (or "Into") shows Bank and Cash with
-   what's in each. Move has From, ⇄, To.
-4. Records: month pill with ‹ ›. Tap it for Months (tap 2 months for a
-   range) or Days. The calendar icon shows the heat map.
-5. Upcoming: the rose card, the 21-day strip and still to pay.
-6. Reports: Spending, Budgets, Goals. Tap a bar or a donut slice.
-7. Settings: the Accounts card at the top. Theme Dark / Light / Phone.
-8. Your old "Bills and other" is now "Bills", and "Clothing and
-   accessories" is "Clothing". Records keep their category. Your accounts
-   get a Bank or Cash icon from their name. Change it in Accounts.
-9. Widget: balance with its little line, Bank and Cash, rent with Paid.
-   Remove and re-add the widget if it still shows the old look.
+CHECK ON THE PHONE AFTER INSTALLING 2.1
+(2.1 includes everything from 2.0 and 1.2.)
+Bag keeps a copy of your data the first time 2.1 opens:
+Settings > Go back to before the last update.
+1. Home: no greeting, everything centred and smaller. Week and Month show
+   two lines: blue is your balance with what you carried in, purple is
+   just that week or month. Total starts at your opening balance on 10 Jun.
+   Tap the line for the figures, the legend and the sum (Saved this month).
+   Drag along it to see any day.
+2. Home: "Is there ... in your wallet?" on Sundays. "No, it's..." adds the
+   difference as Untracked cash. A groceries budget nudge sits under the
+   tiles until you set one or tap x.
+3. Reports: money in and money out as two climbing lines, ‹ › for earlier
+   weeks or months. The sum has a Saved row. "See records ›" opens its own
+   page grouped by category.
+4. Records: rows show just the name and amount. Tap one for details and
+   Open. Hold one to change Bank or Cash, the category or the day, or to
+   Select several. Select: tick records, then "To Cash" or "To Bank".
+5. Upcoming: tap the rose card for the next 3 weeks. Tap a rent for Paid
+   or Skip. Hold it to change it.
+6. +: a blinking cursor in the amount. Tap a digit or use ‹ › to move it.
+   Saving the same name, amount and day twice asks "Already added?".
+7. Import from Excel: "Replace all my records" swaps everything for the
+   file, with Undo.
 
 UPDATING (1.0.1 and later)
 1. On GitHub, open the folder that holds App.js (Bag / Bag).
@@ -82,7 +85,7 @@ UPDATING (1.0.1 and later)
 4. Install the new APK over the old one. Your records stay.
 5. First time after 1.0.1: Settings > Account > Sign in with Google.
 
-- Next update: raise "version" and "versionCode" in app.json (now 2.0.0 and 4),
+- Next update: raise "version" and "versionCode" in app.json (now 2.1.0 and 5),
   push, build again. Installing over the old APK keeps your records.
 - Try it without building: npx expo start, then scan the QR code with
   Expo Go (Google sign-in and the lock need a real build).

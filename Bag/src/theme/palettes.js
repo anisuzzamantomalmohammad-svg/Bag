@@ -15,7 +15,7 @@ const LIGHT = {
   importSoft: '#E4F2EA', importInk: '#2E8A5E',
   // A faint colour at the top of each tab, so you know where you are.
   tints: { Home: '#DCE8F6', Records: '#E2E4F7', Upcoming: '#F7E2E6', Reports: '#E9E2F7' },
-  lineA: '#3B6EA8', lineB: '#2F3D4E', area: '#3B6EA8', dot: '#18202B', dotRing: '#F1F3F6',
+  lineA: '#3B6EA8', lineB: '#1E8C9C', area: '#2A9AAA', lineP: '#7B5CC9', lineIn: '#1E8C9C', glowA: '#5EC8D8', glowB: '#B79CF0', dot: '#18202B', dotRing: '#F1F3F6',
   roseA: '#FBE9EA', roseB: '#F7F1F4', roseBorder: '#F0D3D6', plusA: '#55697F', plusB: '#2F3D4E', plusInk: '#FFFFFF',
   pinBg: '#FCEBD8', barA: '#D5DCE5', barB: '#E6EAF0', barOnA: '#55697F', barOnB: '#2F3D4E',
 };
@@ -28,7 +28,7 @@ const DARK = {
   overlay: 'rgba(0,0,0,0.55)', statusBar: 'light-content', tabBg: 'rgba(21,28,37,0.94)', chipOn: '#D6E3F0', chipOnInk: '#0E131A', segOn: '#1C2430',
   importSoft: '#16302A', importInk: '#5CC79A',
   tints: { Home: '#18263A', Records: '#1A2338', Upcoming: '#2A1C22', Reports: '#20203A' },
-  lineA: '#7FB2F0', lineB: '#D6E3F0', area: '#7FB2F0', dot: '#EEF2F6', dotRing: '#0E131A',
+  lineA: '#7FB2F0', lineB: '#5EC8D8', area: '#5EC8D8', lineP: '#B79CF0', lineIn: '#5EC8D8', glowA: '#5EC8D8', glowB: '#B79CF0', dot: '#EEF2F6', dotRing: '#0E131A',
   roseA: '#2A1E22', roseB: '#17181F', roseBorder: '#3A2A2E', plusA: '#EEF4FA', plusB: '#A9C1DA', plusInk: '#0E131A',
   pinBg: '#2A2018', barA: '#2A3542', barB: '#1E2733', barOnA: '#EEF4FA', barOnB: '#9FB8D3',
 };

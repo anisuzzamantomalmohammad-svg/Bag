@@ -550,3 +550,41 @@ export function balanceLine(data, { flows = allFlows(data), from, now, until, ac
 export function daysUntil(a, b) {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
 }
+
+// Reports' two climbing lines for [from, to]: money in (what you carried in,
+// plus opening balances and every bit of cash in) and money out (every bit of
+// cash out). Both only go up; the gap between them is what you have.
+// carried: what you had the day before `from` (0 for Total, where openings count as money in).
+export function moneyLines(data, { flows = allFlows(data), from, to, carried = 0 }) {
+  const inDay = {};
+  const outDay = {};
+  flows.forEach((f) => {
+    if (f.date < from || f.date > to) return;
+    if (f.count === 'income') inDay[f.date] = (inDay[f.date] || 0) + f.home;
+    else if (f.count === 'expense') outDay[f.date] = (outDay[f.date] || 0) - f.home;
+  });
+  live(data.accounts).forEach((a) => {
+    if (a.openingDate && a.openingDate >= from && a.openingDate <= to) inDay[a.openingDate] = (inDay[a.openingDate] || 0) + openingHome(a);
+  });
+  const pts = [];
+  let i = carried;
+  let o = 0;
+  let cross = null;
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    i += inDay[d] || 0;
+    o += outDay[d] || 0;
+    if (!cross && o > i + 0.004 && i > 0) cross = d;
+    pts.push({ date: d, in: round2(i), out: round2(o) });
+  }
+  return { pts, carried: round2(carried), in: round2(i), out: round2(o), gap: round2(i - o), cross };
+}
+
+// A record that looks like this new one: same kind, day, amount and name.
+export function findDuplicate(data, draft) {
+  if (!draft || draft.id) return null;
+  const name = String(draft.name || '').trim().toLowerCase();
+  const amt = Math.round((Number(draft.amount) || 0) * 100);
+  return liveRecords(data).find((r) => r.type === draft.type && r.date === draft.date
+    && Math.round((Number(r.amount) || 0) * 100) === amt
+    && String(r.name || '').trim().toLowerCase() === name) || null;
+}

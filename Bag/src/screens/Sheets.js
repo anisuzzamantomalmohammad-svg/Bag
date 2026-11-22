@@ -6,9 +6,10 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
 import { Bubble, Button, Chip, Chips, Field, Icon, IconBox, Row, Seg, Sheet, Squish, T, Toggle, useTheme } from '../ui/kit';
-import { accountColor, accountEmoji, catColor } from '../lib/look';
+import { accountColor, accountEmoji, alpha, catColor } from '../lib/look';
+import { recordAmount, useRecordActions } from '../ui/parts';
 import { Calendar } from '../ui/calendar';
-import { accountBalance, displayName, live } from '../lib/ledger';
+import { accountBalance, displayName, isOpen, isPending, live } from '../lib/ledger';
 import { MONTHS, addDays, addMonths, daysBetween, fmtDate, fmtShort, lastDayOfMonth, periodOf, today } from '../lib/dates';
 import { parseAmount } from '../lib/money';
 import { currencyName, sortedCurrencies } from '../data/currencies';
@@ -367,6 +368,102 @@ function ExportSheet({ p, done }) {
   );
 }
 
+/* ------------------------------ Hold a record: change it here ------------------------------ */
+
+// Holding a record opens this: which account, which category, which day,
+// and the quick actions for what it is. Changes apply straight away, with Undo.
+function ChangeSheet({ p, done }) {
+  const app = useApp();
+  const nav = useNav();
+  const th = useTheme();
+  const { data, money } = app;
+  const r = data.records[p.id];
+  const { remove } = useRecordActions();
+  if (!r || r.deleted) return <T color={th.muted}>This record is gone.</T>;
+  const isMoney = r.type === 'expense' || r.type === 'income' || r.type === 'transfer';
+  const pending = isPending(r);
+  const accs = live(data.accounts).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const cat = data.categories[r.categoryId];
+  const kind = r.type === 'income' ? 'income' : 'expense';
+  const cats = live(data.categories).filter((c) => (c.kind || 'expense') === kind).sort((a, b) => (a.id === r.categoryId ? -1 : b.id === r.categoryId ? 1 : (a.order || 0) - (b.order || 0)));
+  const amt = recordAmount(r);
+  const setAcc = (id) => { if (id !== r.accountId) app.patchRecords([r.id], { accountId: id }, () => `Moved to ${data.accounts[id].name}`); };
+  const setCat = (id) => { if (id !== r.categoryId) app.patchRecords([r.id], { categoryId: id }, () => `Now in ${data.categories[id].name}`); };
+  const setDate = (d) => { if (d && d !== r.date) { app.saveRecord({ ...r, date: d }); app.showToast(`Moved to ${fmtShort(d, { weekday: true })}`); } };
+  const quick = [];
+  if (pending) {
+    quick.push({ k: 'paid', label: r.type === 'income' ? '✓ Got it' : r.type === 'transfer' ? '✓ Moved' : '✓ Paid', go: () => { app.markPaid(r.id); done(); } });
+    if (r.repeatId) quick.push({ k: 'skip', label: '⏭ Skip this one', go: () => { app.skipPending(r.id); done(); } });
+  } else if (isMoney && r.status !== 'skipped') {
+    quick.push({ k: 'unpay', label: r.type === 'income' ? '↺ Not arrived yet' : r.type === 'transfer' ? '↺ Not moved yet' : '↺ Not paid yet', go: () => { app.unpay(r.id); done(); } });
+  }
+  if (isOpen(r)) quick.push({ k: 'settle', label: r.type === 'iowe' ? '✓ Paid back' : '✓ Got it back', go: () => { done(); setTimeout(() => nav.openSheet('settle', { id: r.id }), 250); } });
+  if (r.type === 'transfer' && r.toAccountId) quick.push({ k: 'flip', label: '⇄ Flip direction', go: () => app.saveRecord({ ...r, accountId: r.toAccountId, toAccountId: r.accountId, toAmount: null }) });
+  const lbl = (t) => <T size={11.5} color={th.faint} style={{ marginTop: 14, marginBottom: 6, marginLeft: 2 }}>{t}</T>;
+  const pill = (on) => ({ height: 36, paddingHorizontal: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, backgroundColor: on ? th.chipOn : th.soft });
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Bubble emoji={r.type === 'transfer' ? '🔀' : cat && !cat.deleted ? cat.emoji : '🏷️'} color={r.type === 'transfer' ? '#AFC6DE' : catColor(cat)} size={40} />
+        <View style={{ flex: 1 }}>
+          <T size={12.5} color={th.muted}>{fmtDate(r.date, { weekday: true, year: false })}{pending ? ' · Upcoming' : ''}</T>
+        </View>
+        <T serif size={22} color={amt.kind === 'in' ? th.in : amt.kind === 'out' ? th.out : th.ink}>{money(amt.value, { currency: r.currency, plus: amt.kind === 'in' })}</T>
+      </View>
+
+      {quick.length ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>{quick.map((q) => <Pressable key={q.k} onPress={q.go} accessibilityRole="button" style={[pill(false), { backgroundColor: q.k === 'paid' ? th.warnBtn : th.soft }]}><T size={13} weight="medium" color={q.k === 'paid' ? th.warnBtnInk : th.ink}>{q.label}</T></Pressable>)}</View> : null}
+
+      {r.type !== 'transfer' && accs.length > 1 ? (
+        <>
+          {lbl(r.type === 'income' || r.type === 'iowe' ? 'Into' : 'Paid from')}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {accs.slice(0, 3).map((a) => {
+              const on = a.id === r.accountId;
+              return (
+                <Pressable key={a.id} onPress={() => setAcc(a.id)} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={a.name}
+                  style={{ flex: 1, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, backgroundColor: on ? alpha(accountColor(a), 0.16) : th.soft, borderWidth: 1.5, borderColor: on ? accountColor(a) : 'transparent' }}>
+                  <T size={15}>{accountEmoji(a)}</T><T size={13.5} weight={on ? 'semi' : 'regular'} color={on ? th.ink : th.muted} numberOfLines={1}>{a.name}</T>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      ) : null}
+
+      {r.type !== 'transfer' ? (
+        <>
+          {lbl('Category')}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+            {cats.map((c) => <Pressable key={c.id} onPress={() => setCat(c.id)} accessibilityRole="radio" accessibilityState={{ selected: c.id === r.categoryId }} style={pill(c.id === r.categoryId)}><T size={14}>{c.emoji}</T><T size={12.5} color={c.id === r.categoryId ? th.chipOnInk : th.muted}>{c.name}</T></Pressable>)}
+          </ScrollView>
+        </>
+      ) : null}
+
+      {lbl('Day')}
+      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+        <View style={pill(true)}><T size={12.5} color={th.chipOnInk}>{fmtShort(r.date, { weekday: true })}</T></View>
+        <Pressable onPress={() => setDate(addDays(r.date, -1))} accessibilityRole="button" style={pill(false)}><T size={12.5} color={th.muted}>Day before</T></Pressable>
+        <Pressable onPress={() => setDate(addDays(r.date, 1))} accessibilityRole="button" style={pill(false)}><T size={12.5} color={th.muted}>Day after</T></Pressable>
+        <Pressable onPress={() => { done(); setTimeout(() => nav.openSheet('date', { value: r.date, onPick: setDate }), 250); }} accessibilityRole="button" style={pill(false)}><T size={12.5} color={th.muted}>Pick…</T></Pressable>
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 6, marginTop: 16 }}>
+        {[
+          { k: 'edit', icon: 'edit-2', label: 'Edit all', go: () => { done(); nav.push('add', { id: r.id }); } },
+          { k: 'copy', icon: 'copy', label: 'Copy', go: () => { app.duplicateRecord(r.id); done(); } },
+          p.onSelect ? { k: 'select', icon: 'check-square', label: 'Select', go: () => { done(); p.onSelect(r.id); } } : null,
+          { k: 'delete', icon: 'trash-2', label: 'Delete', go: () => remove(r, done), danger: true },
+        ].filter(Boolean).map((a) => (
+          <Pressable key={a.k} onPress={a.go} accessibilityRole="button" accessibilityLabel={a.label} style={{ flex: 1, height: 52, borderRadius: 14, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+            <Icon name={a.icon} size={16} color={a.danger ? th.out : th.ink} />
+            <T size={11.5} color={a.danger ? th.out : th.muted}>{a.label}</T>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 /* ------------------------------ The sheet host ------------------------------ */
 
 const KINDS = {
@@ -381,6 +478,7 @@ const KINDS = {
   confirm: { title: (p, data) => { const r = data.records[p.id]; return r ? `${displayName(r, data)}: ${r.type === 'income' ? 'did it arrive?' : r.type === 'transfer' ? 'did you move it?' : 'did you pay it?'}` : 'Check'; }, C: ConfirmSheet },
   settle: { title: (p, data) => { const r = data.records[p.id]; return r && r.type === 'owed' ? 'Got it back' : 'Paid it back'; }, C: SettleSheet },
   export: { title: () => 'Export to Excel', C: ExportSheet },
+  change: { title: (p, data) => { const r = data.records[p.id]; return r ? displayName(r, data) : 'Record'; }, C: ChangeSheet },
 };
 
 export default function Sheets({ sheet, onClose }) {

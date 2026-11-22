@@ -1,19 +1,22 @@
 // Reports: Spending, Budgets and Goals. Spending goes by week, month or the
-// running total: soft bars of cash out (tap one), a donut of where it went
+// running total: money in and money out as two climbing lines (‹ › for
+// earlier weeks or months), a donut of where it went
 // (tap a slice), colour cards for the biggest categories, then the whole sum
 // for the bar you picked: what you started with, cash in, cash out, what you
 // have now, and what you'll have once Upcoming is paid.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle, Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, G, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Amount, Balance, Card, Chip, Row, Seg, Squish, T, useTheme } from '../ui/kit';
+import { Amount, Balance, Card, Chip, F, Icon, Row, Seg, Squish, T, useTheme } from '../ui/kit';
 import { TabTint } from '../ui/parts';
 import { Budgets, Goals } from './Plan';
 import { alpha, catColor, tint } from '../lib/look';
-import { balanceAtMonthEnds, categoryTotals, live, liveRecords, monthlySeries, openingHome, totalBalance, upcomingUntil, weeklySeries } from '../lib/ledger';
+import { balanceAtMonthEnds, categoryTotals, live, liveRecords, moneyLines, monthlySeries, openingHome, totalBalance, upcomingUntil, weeklySeries } from '../lib/ledger';
 import { MONTHS, addDays, addMonths, fmtDate, fmtShort, lastDayOfMonth, monthLabel, parseYmd, periodOf, today } from '../lib/dates';
 import { fmtApprox, round2 } from '../lib/money';
 
@@ -97,6 +100,9 @@ export default function Reports({ nonce, seg: startSeg }) {
   const balances = useMemo(() => (view === 'cumulative' ? balanceAtMonthEnds(data, `${(series[0] || { key: now.slice(0, 7) }).key}-01`, now, { flows, homePerUnit: app.homePerUnit }) : []), [view, series, flows]);
 
   const setView = (v) => { setSel(null); app.update({ reportsView: v }); };
+  const lines = useMemo(() => (view === 'cumulative'
+    ? moneyLines(data, { flows, from: first, to: now, carried: 0 })
+    : moneyLines(data, { flows, from: pFrom, to: pTo, carried: sum.start })), [view, pFrom, pTo, flows, sum.start, first, data.accounts]);
 
   // Donut: the 5 biggest, then the rest as Other.
   const slices = useMemo(() => {
@@ -114,8 +120,15 @@ export default function Reports({ nonce, seg: startSeg }) {
         <Seg items={[{ id: 'spending', label: 'Spending' }, { id: 'budgets', label: 'Budgets' }, { id: 'goals', label: 'Goals' }]} value={tab} onChange={setTab} />
         {tab === 'budgets' ? <Budgets /> : tab === 'goals' ? <Goals /> : (
         <>
-        <Seg small items={[{ id: 'weekly', label: 'Week' }, { id: 'monthly', label: 'Month' }, { id: 'cumulative', label: 'Total' }]} value={view} onChange={setView} />
-        <Bars series={series} selected={idx} onSelect={(i) => setSel(i)} cumulative={view === 'cumulative'} />
+        <Seg small style={{ alignSelf: 'center', width: 240 }} items={[{ id: 'weekly', label: 'Week' }, { id: 'monthly', label: 'Month' }, { id: 'cumulative', label: 'Total' }]} value={view} onChange={setView} />
+        {view !== 'cumulative' ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: -4 }}>
+            <StepBtn icon="chevron-left" label="Earlier" disabled={idx <= 0} onPress={() => setSel(idx - 1)} />
+            <T size={13} weight="medium" style={{ minWidth: 150, textAlign: 'center' }}>{point.title}{point.partial ? ' (so far)' : ''}</T>
+            <StepBtn icon="chevron-right" label="Later" disabled={idx >= series.length - 1} onPress={() => setSel(idx + 1)} />
+          </View>
+        ) : null}
+        <MoneyGraph lines={lines} word={view === 'weekly' ? 'this week' : view === 'monthly' ? 'this month' : `since ${fmtShort(first)}`} total={view === 'cumulative'} money={app.money} motion={data.animations !== false} />
 
         <View style={{ flexDirection: 'row', gap: 6 }}>
           <Chip label="Cash out" on={!showIncome} onPress={() => setShowIncome(false)} />
@@ -128,7 +141,7 @@ export default function Reports({ nonce, seg: startSeg }) {
           <>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <T size={13} color={th.muted}>{showIncome ? 'Where most of it came from' : 'Where most of it went'}</T>
-              <Pressable onPress={() => nav.setTab('Records', { counts: showIncome ? 'income' : 'expense', from: pFrom, to: pTo })} accessibilityRole="button" hitSlop={8}><T size={13} weight="medium" color={th.chipOn}>See records</T></Pressable>
+              <Pressable onPress={() => nav.push('breakdown', { kind: showIncome ? 'income' : 'expense', from: pFrom, to: pTo, title: view === 'cumulative' ? `Since ${fmtShort(first)}` : point.title })} accessibilityRole="button" hitSlop={8}><T size={13} weight="medium" color={th.chipOn}>See records ›</T></Pressable>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 10 }}>
               {cats.map((c) => {
@@ -160,6 +173,10 @@ export default function Reports({ nonce, seg: startSeg }) {
           {sum.openingIn ? <Row minHeight={46} label="Opening balance" sub="Not cash in" value={<Amount value={sum.openingIn} kind={sum.openingIn < 0 ? 'out' : 'neutral'} plus={false} />} chevron={false} /> : null}
           <Row minHeight={46} label="Cash in" onPress={() => setShowIncome(true)} value={<Amount value={point.income} kind="in" />} chevron={false} accessibilityLabel="Cash in: show where it came from" />
           <Row minHeight={46} label="Cash out" onPress={() => setShowIncome(false)} value={<Amount value={-point.expense} kind="out" />} chevron={false} accessibilityLabel="Cash out: show where it went" />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 40, marginHorizontal: -8, paddingHorizontal: 8, marginVertical: 4, borderRadius: 12, backgroundColor: alpha(net >= 0 ? th.in : th.out, 0.1) }}>
+            <T size={14} weight="semi" color={net >= 0 ? th.in : th.out}>{net >= 0 ? 'Saved' : 'Overspent'} {view === 'weekly' ? 'this week' : view === 'monthly' ? 'this month' : `since ${fmtShort(first)}`}</T>
+            <T size={14} weight="semi" color={net >= 0 ? th.in : th.out}>{app.money(net, { plus: net > 0 })}</T>
+          </View>
           {sum.other ? <Row minHeight={46} label="Lent, borrowed, paid back" sub="Not cash in or out" onPress={() => nav.setTab('Records', { type: 'people', from: pFrom, to: pTo })} value={<Amount value={sum.other} kind="neutral" plus />} chevron={false} /> : null}
           <Row minHeight={46} label={<T weight="semi">{sum.current ? 'You have now' : `On ${fmtShort(pTo)}`}</T>} value={<Amount value={sum.end} kind={sum.end < 0 ? 'out' : 'neutral'} plus={false} />} chevron={false} onPress={() => nav.push('accounts')} />
           {sum.ahead ? (
@@ -190,36 +207,95 @@ export default function Reports({ nonce, seg: startSeg }) {
   );
 }
 
-// Soft bars of cash out (or the running total), one per week or month. Tap a
-// bar to see its numbers below. They grow in one after another.
-function Bars({ series, selected, onSelect, cumulative }) {
+function StepBtn({ icon, label, disabled, onPress }) {
   const th = useTheme();
-  const max = Math.max(1, ...series.map((x) => x.expense));
-  const grow = useRef(new Animated.Value(0)).current;
-  useEffect(() => { grow.setValue(0); Animated.timing(grow, { toValue: 1, duration: 800, easing: Easing.out(Easing.back(1.2)), useNativeDriver: false }).start(); }, [series.length, cumulative, max]);
+  return (
+    <Pressable onPress={disabled ? undefined : onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 11, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: disabled ? 0.35 : 1 }}>
+      <Icon name={icon} size={16} color={th.muted} />
+    </Pressable>
+  );
+}
+
+// Money in and money out, both climbing. The gap between them is what you
+// have. Tap the graph for the gap and the day spending caught up, if it did.
+function MoneyGraph({ lines, word, total, money, motion }) {
+  const th = useTheme();
+  const [w, setW] = useState(0);
+  const [open, setOpen] = useState(false);
+  const draw = useRef(new Animated.Value(0)).current;
+  const H = 160;
+  const g = useMemo(() => {
+    if (!w || !lines.pts.length) return null;
+    const pl = 10, pr = 10, top = 22, bot = 22;
+    const n = Math.max(1, lines.pts.length - 1);
+    const hi = Math.max(1, ...lines.pts.map((p) => Math.max(p.in, p.out))) * 1.08;
+    const x = (i) => pl + (i / n) * (w - pl - pr);
+    const y = (v) => top + ((hi - v) / hi) * (H - top - bot);
+    // Steps: money moves on a day, then stays flat until the next one.
+    const path = (k) => lines.pts.map((p, i) => (i ? `L${x(i).toFixed(1)} ${y(lines.pts[i - 1][k]).toFixed(1)} L${x(i).toFixed(1)} ${y(p[k]).toFixed(1)}` : `M${x(0).toFixed(1)} ${y(p[k]).toFixed(1)}`)).join(' ');
+    const area = (k) => `${path(k)} L${x(n).toFixed(1)} ${y(0).toFixed(1)} L${x(0).toFixed(1)} ${y(0).toFixed(1)} Z`;
+    const crossI = lines.cross ? lines.pts.findIndex((p) => p.date === lines.cross) : -1;
+    return { x, y, n, path, area, crossI };
+  }, [w, lines]);
+  useEffect(() => {
+    draw.setValue(motion ? 0 : 1);
+    if (motion) Animated.timing(draw, { toValue: 1, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  }, [lines.in, lines.out, lines.pts.length, motion]);
+  const last = lines.pts[lines.pts.length - 1] || { in: 0, out: 0 };
+  const first = lines.pts[0] || { date: '' };
   return (
     <View>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, height: 130 }}>
-        {series.map((x, i) => {
-          const on = i === selected;
-          const h = Math.max(4, (x.expense / max) * 118);
-          return (
-            <Pressable key={x.key || i} onPress={() => onSelect(i)} accessibilityRole="button" accessibilityState={{ selected: on }} accessibilityLabel={`${x.title}: cash out ${x.expense}`} style={{ flex: 1, height: '100%', justifyContent: 'flex-end' }}>
-              <Animated.View style={{ height: grow.interpolate({ inputRange: [0, 1], outputRange: [0, h] }), borderTopLeftRadius: 10, borderTopRightRadius: 10, borderBottomLeftRadius: 6, borderBottomRightRadius: 6, overflow: 'hidden' }}>
-                <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-                  <Defs><LinearGradient id={`b${i}${on ? 'on' : ''}`} x1="0" y1="0" x2="0" y2="1"><Stop offset="0" stopColor={on ? th.barOnA : th.barA} /><Stop offset="1" stopColor={on ? th.barOnB : th.barB} /></LinearGradient></Defs>
-                  <Rect x="0" y="0" width="100%" height="100%" fill={`url(#b${i}${on ? 'on' : ''})`} />
-                </Svg>
-                {x.partial ? <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, backgroundColor: th.warn, opacity: 0.6 }} /> : null}
-              </Animated.View>
-            </Pressable>
-          );
-        })}
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <KeyCard color={th.lineIn} label={lines.carried ? `Money in (${money(lines.carried)} carried)` : total ? 'Money in, with opening' : `Money in ${word}`} value={money(lines.in)} />
+        <KeyCard color={th.out} label={`Spent ${word}`} value={money(lines.out)} />
       </View>
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-        {series.map((x, i) => <T key={x.key || i} size={10.5} center color={i === selected ? th.chipOn : th.faint} style={{ flex: 1 }} numberOfLines={1}>{x.label}</T>)}
-      </View>
-      <T size={11.5} color={th.faint} style={{ marginTop: 4 }}>{cumulative ? 'Cash out added up, month by month' : 'Cash out'} · tap a bar</T>
+      <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" accessibilityLabel={`Money in ${money(lines.in)} and money out ${money(lines.out)}. The gap, ${money(lines.gap)}, is what you have. Tap for details.`} onLayout={(e) => setW(e.nativeEvent.layout.width)} style={{ height: H, marginTop: 6 }}>
+        {g ? (
+          <Svg width={w} height={H}>
+            <Defs>
+              <LinearGradient id="mgA" x1="0" y1="0" x2="0" y2="1"><Stop offset="0" stopColor={th.lineIn} stopOpacity={0.24} /><Stop offset="1" stopColor={th.lineIn} stopOpacity={0} /></LinearGradient>
+              <LinearGradient id="mgB" x1="0" y1="0" x2="0" y2="1"><Stop offset="0" stopColor={th.out} stopOpacity={0.2} /><Stop offset="1" stopColor={th.out} stopOpacity={0} /></LinearGradient>
+            </Defs>
+            <Path d={g.area('in')} fill="url(#mgA)" />
+            <Path d={g.area('out')} fill="url(#mgB)" />
+            <AnimatedPath d={g.path('out')} stroke={th.out} strokeWidth={2.2} fill="none" strokeLinejoin="round" opacity={draw} />
+            <AnimatedPath d={g.path('in')} stroke={th.lineIn} strokeWidth={2.4} fill="none" strokeLinejoin="round" opacity={draw} />
+            <Circle cx={g.x(g.n)} cy={g.y(last.in)} r={4.5} fill={th.dot} stroke={th.dotRing} strokeWidth={2.5} />
+            <Circle cx={g.x(g.n)} cy={g.y(last.out)} r={4} fill={th.out} stroke={th.dotRing} strokeWidth={2} />
+            {open ? (
+              <G>
+                <Line x1={g.x(g.n) - 6} x2={g.x(g.n) - 6} y1={g.y(last.in)} y2={g.y(last.out)} stroke={th.ink} strokeOpacity={0.5} />
+                <SvgText x={g.x(g.n) - 10} y={Math.min(g.y(last.in), g.y(last.out)) - 8} fontSize={10.5} fontFamily={F.semi} textAnchor="end" fill={th.ink}>{`Gap ${money(lines.gap)}: what you have`}</SvgText>
+                {g.crossI >= 0 ? (
+                  <G>
+                    <Line x1={g.x(g.crossI)} x2={g.x(g.crossI)} y1={14} y2={H - 22} stroke={th.warn} strokeOpacity={0.6} strokeDasharray="2 3" />
+                    <SvgText x={g.x(g.crossI) + (g.x(g.crossI) < w / 2 ? 4 : -4)} y={H - 26} fontSize={10} fontFamily={F.regular} textAnchor={g.x(g.crossI) < w / 2 ? 'start' : 'end'} fill={th.warn}>{`${fmtShort(lines.cross)}: spending caught up`}</SvgText>
+                  </G>
+                ) : null}
+              </G>
+            ) : null}
+            <SvgText x={g.x(0)} y={H - 4} fontSize={10} fill={th.faint} fontFamily={F.regular}>{first.date ? fmtShort(first.date) : ''}</SvgText>
+            <SvgText x={g.x(g.n)} y={H - 4} fontSize={10} fill={th.faint} fontFamily={F.regular} textAnchor="end">{last.date ? fmtShort(last.date) : ''}</SvgText>
+          </Svg>
+        ) : null}
+      </Pressable>
+      {!open ? <T size={11} color={th.faint} center>Tap the graph for details</T> : (
+        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 14, height: 3, borderRadius: 2, backgroundColor: th.lineIn }} /><T size={11.5} color={th.muted}>Money in</T></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View style={{ width: 14, height: 3, borderRadius: 2, backgroundColor: th.out }} /><T size={11.5} color={th.muted}>Money out</T></View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function KeyCard({ color, label, value }) {
+  const th = useTheme();
+  return (
+    <View style={{ flex: 1, borderRadius: 16, paddingVertical: 9, paddingHorizontal: 8, alignItems: 'center', backgroundColor: alpha(color, 0.12) }}>
+      <View style={{ width: 16, height: 3, borderRadius: 2, backgroundColor: color, marginBottom: 5 }} />
+      <T size={10.5} color={th.muted} center numberOfLines={1}>{label}</T>
+      <T serif size={18} color={tint(color, th.mode === 'dark' ? 0.3 : -0.3)}>{value}</T>
     </View>
   );
 }

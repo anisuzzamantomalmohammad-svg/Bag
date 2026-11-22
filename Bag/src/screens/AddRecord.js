@@ -9,13 +9,13 @@ import { useApp } from '../state/store';
 import { useNav } from '../nav';
 import { Bubble, Button, Card, Chip, Chips, F, Field, Icon, Row, Screen, Seg, Squish, T, Toggle, useTheme } from '../ui/kit';
 import { accountColor, accountEmoji, alpha, catColor } from '../lib/look';
-import { accountBalance, descriptionSuggestions, isPending, splitNameAmount, live, nameSuggestions, peopleSuggestions } from '../lib/ledger';
+import { accountBalance, descriptionSuggestions, displayName, findDuplicate, isPending, splitNameAmount, live, nameSuggestions, peopleSuggestions } from '../lib/ledger';
 import { fmtShort, today } from '../lib/dates';
 import { fmt, parseAmount, round2 } from '../lib/money';
 import { describe, presetRule } from '../lib/repeats';
 import { savedRate } from '../lib/rates';
 import { pickPhoto } from '../lib/photos';
-import { keyIn } from '../lib/keypad';
+import { keyAt } from '../lib/keypad';
 
 const TYPES = [['expense', 'Out'], ['income', 'In'], ['transfer', 'Move'], ['people', 'People']];
 const PEOPLE_COLOR = '#B79CF0';
@@ -27,6 +27,17 @@ function Key({ k, onPress, th }) {
       {k === 'del' ? <Icon name="delete" size={20} color={th.ink} /> : <T size={22}>{k}</T>}
     </Squish>
   );
+}
+
+// A blinking bar where the next digit goes.
+function Caret({ color }) {
+  const a = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([Animated.timing(a, { toValue: 0, duration: 450, delay: 300, useNativeDriver: Platform.OS !== 'web' }), Animated.timing(a, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' })]));
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  return <Animated.View style={{ width: 2.5, height: 44, borderRadius: 2, marginHorizontal: 1, backgroundColor: color, opacity: a }} />;
 }
 
 function AccButton({ a, label, on, onPress, app, th, flex = 1 }) {
@@ -73,6 +84,9 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
 
   const [type, setType] = useState(init.type);
   const [amount, setAmount] = useState(init.amount ? String(init.amount) : '');
+  // Where the next digit goes. null = at the end.
+  const [caret, setCaret] = useState(null);
+  const at = caret == null ? amount.length : Math.min(caret, amount.length);
   const [currency, setCurrency] = useState(init.currency || home);
   const [name, setName] = useState(init.name || '');
   const [categoryId, setCategoryId] = useState(init.categoryId || null);
@@ -135,6 +149,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
     dirty.current = true;
     setErrors({});
     setAmount(offer.amount);
+    setCaret(null);
     if (offer.name) setName(offer.name);
     setHintAmount('');
   };
@@ -178,7 +193,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
     return { ...base, ...(oldRep ? { confirm: oldRep.confirm, amountMode: oldRep.amountMode, end: oldRep.end } : {}), ...presetRule(preset, isDebt ? dueDate : date) };
   };
 
-  const save = () => {
+  const save = (confirmed) => {
     const e = {};
     const amtUse = amt;
     const nameUse = name;
@@ -204,6 +219,16 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
       rateManual: foreign && !!rateText, rate: foreign ? rate || 1 : 1,
       upcoming: isMoney ? willWait : undefined,
     };
+    const dup = !old && (type === 'expense' || type === 'income') ? findDuplicate(data, draft) : null;
+    if (dup && !confirmed) {
+      nav.openSheet('choice', {
+        title: 'Already added?',
+        text: `${displayName(dup, data)} for ${app.money(dup.amount, { currency: dup.currency })} is already in ${fmtShort(dup.date, { weekday: true })}.`,
+        options: [{ id: 'add', label: 'Add it again', emoji: '＋', sub: 'It really happened twice' }, { id: 'no', label: "Don't add it", emoji: '✕' }],
+        onPick: (k) => { if (k === 'add') setTimeout(() => save(true), 260); else { dirty.current = false; setTimeout(() => nav.pop(), 260); } },
+      });
+      return;
+    }
     const savedId = app.saveRecord(draft, { repeat: rule(), split: split ? { who: splitWho.trim(), share } : undefined });
     if (!old) app.update({ addMore: !!(preset !== 'never' || split || description.trim() || photos.length) });
     if (savedId) {
@@ -230,7 +255,9 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
   const press = (k) => {
     dirty.current = true;
     setErrors({});
-    setAmount((cur) => keyIn(cur, k));
+    const out = keyAt(amount, caret, k);
+    setAmount(out.v);
+    setCaret(out.c);
     if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {});
     if (motion) { bump.setValue(1.08); Animated.spring(bump, { toValue: 1, friction: 4, useNativeDriver: Platform.OS !== 'web' }).start(); }
   };
@@ -253,7 +280,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
       title={old ? 'Edit record' : 'New record'}
       back="close"
       onBack={close}
-      footer={<Button label={willWait && !(old && isPending(old)) ? 'Save as Upcoming' : 'Save'} onPress={save} />}
+      footer={<Button label={willWait && !(old && isPending(old)) ? 'Save as Upcoming' : 'Save'} onPress={() => save(false)} />}
     >
       <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center' }}>
         {TYPES.map(([t, l]) => {
@@ -279,7 +306,21 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
           <Ellipse cx={130} cy={85} rx={130} ry={85} fill="url(#glow)" />
         </Svg>
         <Animated.View style={{ transform: [{ scale: bump }, { translateX: shake }] }}>
-          <T serif size={58} accessibilityLabel={`Amount ${amount || 0}`} color={amount ? th.ink : th.faint2} style={{ lineHeight: 66 }}>{amount || (offer ? offer.amount : '0')}</T>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Pressable onPress={() => setCaret(Math.max(0, at - 1))} accessibilityRole="button" accessibilityLabel="Cursor left" hitSlop={6} style={{ width: 32, height: 32, borderRadius: 11, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: amount ? 1 : 0.35 }}><Icon name="chevron-left" size={16} color={th.muted} /></Pressable>
+            <View accessibilityLabel={`Amount ${amount || 0}`} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 66 }}>
+              {amount ? amount.split('').map((ch, i) => (
+                <React.Fragment key={i}>
+                  {i === at ? <Caret color={kindColor} /> : null}
+                  <Pressable onPress={(e) => { const half = e.nativeEvent.locationX < 14; setCaret(half ? i : i + 1); }} accessibilityLabel={`Digit ${ch}`}>
+                    <T serif size={54} style={{ lineHeight: 64 }}>{ch}</T>
+                  </Pressable>
+                </React.Fragment>
+              )) : <T serif size={54} color={th.faint2} style={{ lineHeight: 64 }}>{offer ? offer.amount : '0'}</T>}
+              {at >= amount.length ? <Caret color={kindColor} /> : null}
+            </View>
+            <Pressable onPress={() => setCaret(Math.min(amount.length, at + 1))} accessibilityRole="button" accessibilityLabel="Cursor right" hitSlop={6} style={{ width: 32, height: 32, borderRadius: 11, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: amount ? 1 : 0.35 }}><Icon name="chevron-right" size={16} color={th.muted} /></Pressable>
+          </View>
         </Animated.View>
         <Pressable onPress={() => nav.openSheet('currency', { onPick: (c) => { dirty.current = true; setCurrency(c); setRateText(''); } })} accessibilityRole="button" accessibilityLabel={`Currency ${currency}`} hitSlop={8} style={{ minHeight: 26, paddingHorizontal: 10, borderRadius: 999, justifyContent: 'center' }}>
           <T size={12} weight="medium" color={th.faint}>{currency} ▾</T>

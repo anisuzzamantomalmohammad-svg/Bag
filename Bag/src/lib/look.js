@@ -33,7 +33,7 @@ export function tint(hex, amount) {
   const n = parseInt(String(hex).replace('#', ''), 16);
   if (Number.isNaN(n)) return hex;
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  const m = (c) => Math.round(c + (255 - c) * amount);
+  const m = (c) => Math.max(0, Math.round(amount >= 0 ? c + (255 - c) * amount : c * (1 + amount)));
   return `rgb(${m(r)},${m(g)},${m(b)})`;
 }
 // The same colour, see-through.

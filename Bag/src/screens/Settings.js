@@ -1,8 +1,9 @@
 // Settings on one page, searchable: Account, Money, Reminders, Look, Data.
 // The rarely changed ones sit behind Advanced.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useState } from 'react';
 import { Alert, Linking, Pressable, View } from 'react-native';
-import { useApp, DEFAULTS } from '../state/store';
+import { BACKUP_KEY, useApp, DEFAULTS } from '../state/store';
 import { useNav } from '../nav';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Bubble, Button, Card, Field, Icon, Label, Row, Screen, Seg, Sheet, Squish, T, Toggle, useTheme } from '../ui/kit';
@@ -94,6 +95,18 @@ export default function Settings({ section }) {
   const [q, setQ] = useState('');
   const [only, setOnly] = useState(section || null);
   const [restoring, setRestoring] = useState(false);
+  const restoreBeforeUpdate = async () => {
+    let b = null;
+    try { b = JSON.parse(await AsyncStorage.getItem(BACKUP_KEY)); } catch (e) { b = null; }
+    if (!b || !b.raw) { app.showToast('No copy from before an update on this phone'); return; }
+    const go = () => { try { app.restoreData(JSON.parse(b.raw)); } catch (e) { app.showToast("Couldn't read that copy"); } };
+    nav.openSheet('choice', {
+      title: 'Go back to before the update?',
+      text: `This puts back your records, accounts and categories as they were on ${new Date(b.at).toLocaleDateString()}, before version ${VERSION} opened. Anything added since is replaced.`,
+      options: [{ id: 'go', label: 'Yes, put it back', emoji: '↺' }, { id: 'no', label: 'Cancel', emoji: '✕' }],
+      onPick: (k) => { if (k === 'go') go(); },
+    });
+  };
   const [adv, setAdv] = useState(false);
   const cards = data.homeCards || [];
   const moveCard = (i, dir) => {
@@ -135,6 +148,7 @@ export default function Settings({ section }) {
       g ? { key: 'sync', words: 'sync now phones drive', node: (f) => <Row first={f} label="Sync now" sub={app.syncing ? 'Syncing…' : `Last synced ${ago(data.lastSyncAt).toLowerCase()}`} onPress={() => app.syncNow({ manual: true })} /> } : null,
       g ? { key: 'backup', words: 'back up backup drive', node: (f) => <Row first={f} label="Back up now" sub={`Last backup ${ago(data.lastDriveBackupAt).toLowerCase()}. Bag also backs up on its own when something changes.`} onPress={() => app.backupNow({ manual: true })} /> } : null,
       g ? { key: 'restore', words: 'restore backup drive', node: (f) => <Row first={f} label="Restore a backup" onPress={() => setRestoring(true)} /> } : null,
+      { key: 'beforeupdate', words: 'restore backup update undo before', node: (f) => <Row first={f} label="Go back to before the last update" sub="Bag saved a copy of everything the first time this version opened" onPress={restoreBeforeUpdate} /> },
       g ? { key: 'out', words: 'sign out google', node: (f) => <Row first={f} label={<T color={th.danger}>Sign out</T>} onPress={() => Alert.alert('Sign out of Google?', 'Your records stay on this phone. Syncing and Drive backups stop.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Sign out', style: 'destructive', onPress: () => app.signOutGoogle() }])} chevron={false} /> } : null,
       !g ? { key: 'in', words: 'google sign in account sync drive backup', node: (f) => <Row first={f} minHeight={64} left={<Icon name="cloud" size={20} color={th.accent} />} label="Sign in with Google" sub={configured ? 'Sync between phones and back up to your Google Drive. Optional.' : "Google sign-in isn't set up in this build yet"} onPress={configured ? () => app.signInGoogle() : undefined} /> } : null,
       !g ? { key: 'name', words: 'name you', node: (f) => <Row first={f} label="Your name" value={data.ownerName || 'Not set'} onPress={() => nav.openSheet('text', { title: 'Your name', value: data.ownerName, placeholder: 'Name', onPick: (v) => update({ ownerName: v }) })} /> } : null,
@@ -164,6 +178,7 @@ export default function Settings({ section }) {
           <Seg small items={[{ id: 'dark', label: 'Dark' }, { id: 'light', label: 'Light' }, { id: 'auto', label: 'Phone' }]} value={data.themeMode} onChange={(v) => update({ themeMode: v })} />
         </View>
       ) },
+      { key: 'cashcheck', words: 'cash check wallet sunday count', node: (f) => <Row first={f} label="Sunday cash check" sub="Home asks if your cash matches what's in your wallet" right={<Toggle value={data.cashCheck !== false} onChange={(v) => update({ cashCheck: v })} label="Sunday cash check" />} /> },
       { key: 'anim', words: 'animations motion swipe 3d reduce', node: (f) => <Row first={f} label="Animations" sub="3D swipe between tabs, drawing lines, springy buttons" right={<Toggle value={data.animations !== false} onChange={(v) => update({ animations: v })} label="Animations" />} /> },
       { key: 'accent', words: 'accent colour color slate blue teal purple pink', node: (f) => (
         <View style={{ paddingVertical: 12, borderTopWidth: f ? 0 : 1, borderTopColor: th.line, gap: 10 }}>
