@@ -1,0 +1,125 @@
+{
+  "expo": {
+    "name": "Bag",
+    "slug": "bag",
+    "owner": "anisuzzaman_tamal",
+    "version": "2.2.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "backgroundColor": "#F1F3F6",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.tomal.bag"
+    },
+    "android": {
+      "package": "com.tomal.bag",
+      "versionCode": 6,
+      "icon": "./assets/icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-monochrome.png",
+        "backgroundColor": "#3B4B5E"
+      },
+      "edgeToEdgeEnabled": true,
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ],
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon-light.png",
+          "imageWidth": 140,
+          "resizeMode": "contain",
+          "backgroundColor": "#F1F3F6",
+          "dark": {
+            "image": "./assets/splash-icon-dark.png",
+            "backgroundColor": "#121821"
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#3B4B5E"
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Used to unlock Bag."
+        }
+      ],
+      "expo-font",
+      "expo-background-task",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Bag uses your photos to attach receipts to records.",
+          "cameraPermission": "Bag uses the camera to take photos of receipts.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "fonts": [
+            "./assets/fonts/Fraunces_400Regular.ttf"
+          ],
+          "widgets": [
+            {
+              "name": "Bag",
+              "label": "Bag",
+              "description": "Balance, what's free to spend, Bank, Cash and savings",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "maxResizeWidth": "600dp",
+              "maxResizeHeight": "700dp",
+              "resizeMode": "horizontal|vertical",
+              "widgetCategory": "home_screen",
+              "updatePeriodMillis": 1800000
+            },
+            {
+              "name": "BagJar",
+              "label": "Bag jar",
+              "description": "What's in your savings jars",
+              "minWidth": "110dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 2,
+              "targetCellHeight": 2,
+              "maxResizeWidth": "300dp",
+              "maxResizeHeight": "300dp",
+              "resizeMode": "horizontal|vertical",
+              "widgetCategory": "home_screen",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ]
+    ],
+    "scheme": "bag",
+    "extra": {
+      "eas": {
+        "projectId": "89a3a7c8-f9bf-4c32-8a6c-e8b38362ef2a"
+      }
+    }
+  }
+}

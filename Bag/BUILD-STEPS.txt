@@ -1,0 +1,91 @@
+HOW TO BUILD THE BAG APK
+(same as Deen: build from GitHub on expo.dev)
+
+1. GITHUB
+   - Everything in this folder goes at the top of the "Bag" repo
+     (App.js, app.json, package.json, src/, assets/, docs/ ...).
+   - Website for the privacy policy: repo Settings > Pages >
+     Source "Deploy from a branch", branch main, folder /docs.
+     If the files sit inside a "Bag" folder in the repo (base directory
+     /Bag on Expo), choose folder / (root) instead. The page is then at
+     https://anisuzzamantomalmohammad-svg.github.io/Bag/Bag/docs/privacy.html
+     (Settings > About > Privacy policy in the app opens this link.)
+
+2. EXPO PROJECT
+   - expo.dev > Projects > Create project, name "bag",
+     account anisuzzaman_tamal. Copy the project ID.
+   - In app.json add this inside "expo" (next to "plugins"):
+       "extra": { "eas": { "projectId": "PASTE-ID-HERE" } }
+     (Or run  eas init  once on a computer; it writes the same thing.)
+   - Project > GitHub: connect the Bag repo.
+
+3. FIRST BUILD (no Google sign-in yet)
+   - expo.dev > Bag > Builds > Build from GitHub:
+       platform Android, branch main, base directory /  (leave blank),
+       profile preview.
+   - "Generate a new Android Keystore?" -> Yes. Keep this Expo account:
+     it holds the signing key, and updates must use the same key.
+   - Install the APK from the link. Everything works except
+     "Sign in with Google", which says it isn't set up in this build.
+
+4. TURN ON GOOGLE SIGN-IN (optional, do it after the first build)
+   a. expo.dev > Bag > Credentials > Android > com.tomal.bag:
+      copy the SHA-1 fingerprint of the keystore.
+   b. console.cloud.google.com > new project "Bag".
+   c. APIs & Services > Library > Google Drive API > Enable.
+   d. OAuth consent screen (Google Auth Platform):
+        app name Bag, your email, home page
+        https://anisuzzamantomalmohammad-svg.github.io/Bag/,
+        privacy policy
+        https://anisuzzamantomalmohammad-svg.github.io/Bag/privacy.html
+        Data access > add scope .../auth/drive.appdata
+        Audience: External, add your Gmail as a test user.
+   e. Clients > Create client > Android:
+        package name  com.tomal.bag
+        SHA-1         the one from step a
+   f. Clients > Create client > Web application, name "Bag web".
+      Copy its Client ID (ends in .apps.googleusercontent.com).
+   g. Paste it in src/lib/config.js:
+        export const GOOGLE_WEB_CLIENT_ID = '....apps.googleusercontent.com';
+      Commit, push, and build again (step 3). Install over the old one.
+   Google sign-in only works in builds signed with that keystore. Don't
+   create new build credentials, or sign-in breaks.
+
+CHECK ON THE PHONE AFTER INSTALLING 2.1
+(2.1 includes everything from 2.0 and 1.2.)
+Bag keeps a copy of your data the first time 2.1 opens:
+Settings > Go back to before the last update.
+1. Home: no greeting, everything centred and smaller. Week and Month show
+   two lines: blue is your balance with what you carried in, purple is
+   just that week or month. Total starts at your opening balance on 10 Jun.
+   Tap the line for the figures, the legend and the sum (Saved this month).
+   Drag along it to see any day.
+2. Home: "Is there ... in your wallet?" on Sundays. "No, it's..." adds the
+   difference as Untracked cash. A groceries budget nudge sits under the
+   tiles until you set one or tap x.
+3. Reports: money in and money out as two climbing lines, ‹ › for earlier
+   weeks or months. The sum has a Saved row. "See records ›" opens its own
+   page grouped by category.
+4. Records: rows show just the name and amount. Tap one for details and
+   Open. Hold one to change Bank or Cash, the category or the day, or to
+   Select several. Select: tick records, then "To Cash" or "To Bank".
+5. Upcoming: tap the rose card for the next 3 weeks. Tap a rent for Paid
+   or Skip. Hold it to change it.
+6. +: a blinking cursor in the amount. Tap a digit or use ‹ › to move it.
+   Saving the same name, amount and day twice asks "Already added?".
+7. Import from Excel: "Replace all my records" swaps everything for the
+   file, with Undo.
+
+UPDATING (1.0.1 and later)
+1. On GitHub, open the folder that holds App.js (Bag / Bag).
+2. Add file > Upload files. Drag in everything from the new zip's Bag
+   folder. GitHub replaces the files with the same names. Commit.
+3. expo.dev > bag > Build from GitHub: base directory /Bag, Android,
+   main, preview. Use the same keystore (don't make a new one).
+4. Install the new APK over the old one. Your records stay.
+5. First time after 1.0.1: Settings > Account > Sign in with Google.
+
+- Next update: raise "version" and "versionCode" in app.json (now 2.1.0 and 5),
+  push, build again. Installing over the old APK keeps your records.
+- Try it without building: npx expo start, then scan the QR code with
+  Expo Go (Google sign-in and the lock need a real build).
