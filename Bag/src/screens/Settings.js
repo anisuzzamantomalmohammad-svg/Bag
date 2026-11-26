@@ -20,6 +20,7 @@ import { fmt, parseAmount } from '../lib/money';
 import { DOW, defaultIn, groupOf, marginOf } from '../lib/plan';
 import { LOOKS } from '../ui/looks';
 import { NEW_IN } from './WhatsNew';
+import { useCalmReason } from '../ui/live';
 
 const VERSION = require('../../app.json').expo.version;
 const SAMPLE = -1234.5;
@@ -148,6 +149,7 @@ export default function Settings({ section }) {
     nav.openSheet('currency', { value: data.homeCurrency, title: 'Home currency', onPick: (c) => update({ homeCurrency: c }) });
   };
 
+  const calm = useCalmReason();
   const margin = marginOf(data);
   const banks = live(data.accounts).filter((a) => groupOf(a) === 'bank');
   const marginBank = data.accounts[(data.margin || {}).accountId] || data.accounts[defaultIn(data, 'bank')];
@@ -217,13 +219,12 @@ export default function Settings({ section }) {
       ) },
       { key: 'looks', words: 'look background coins world country design culture', node: (f) => <Row first={f} label="Background" sub={data.backdrop === false ? 'Off' : `${pickedLooks.length} picked · ${LOOK_MODE[(data.looks || {}).mode] || LOOK_MODE.each}`} value={data.backdrop === false ? '' : (LOOKS.find((l) => l.id === data.lookNow) || LOOKS[0]).name} onPress={() => nav.openSheet('looks', {})} /> },
       { key: 'vibe', words: 'vibration haptic feedback buzz', node: (f) => <Row first={f} label="Vibration" sub="A small tap when you press things" right={<Toggle value={data.vibration !== false} onChange={(v) => update({ vibration: v })} label="Vibration" />} /> },
-      { key: 'reduce', words: 'reduce motion calm animations battery', node: (f) => <Row first={f} label="Reduce motion" sub="Stops floating coins, folding cards and tilt. Battery saver does this too." right={<Toggle value={!!data.reduceMotion} onChange={(v) => update({ reduceMotion: v })} label="Reduce motion" />} /> },
+      { key: 'reduce', words: 'reduce motion calm animations battery', node: (f) => <Row first={f} label="Reduce motion" sub={calm === 'battery' ? 'Things are still now because battery saver is on' : calm === 'system' ? "Things are still now because the phone's Remove animations is on (Settings › Accessibility)" : 'Stops floating coins, folding cards and tilt. Battery saver does this too.'} right={<Toggle value={!!data.reduceMotion} onChange={(v) => update({ reduceMotion: v })} label="Reduce motion" />} /> },
       !data.reduceMotion ? { key: 'tilt', words: 'tilt 3d motion sensor lean', node: (f) => <Row first={f} label="Tilt" sub="Cards lean a little as you tilt the phone" right={<Toggle value={data.tilt !== false} onChange={(v) => update({ tilt: v })} label="Tilt" />} /> } : null,
       { key: 'wunder', words: 'widget home screen under number', node: (f) => <Row first={f} label="Widget: under the number" value={WIDGET_UNDER[(data.widget || {}).under || 'by']} onPress={() => choose('Under the widget number', Object.entries(WIDGET_UNDER), (data.widget || {}).under || 'by', (v) => set('widget', { under: v }))} /> },
       { key: 'wcoming', words: 'widget coming upcoming bills', node: (f) => <Row first={f} label="Widget: what's coming" sub="On a taller widget" right={<Toggle value={(data.widget || {}).coming !== false} onChange={(v) => set('widget', { coming: v })} label="Widget shows what's coming" />} /> },
       { key: 'whatsnew', words: 'whats new changes version', node: (f) => <Row first={f} label={`What's new in ${NEW_IN}`} onPress={() => nav.push('whatsnew')} /> },
       { key: 'cashcheck', words: 'cash check wallet sunday count', node: (f) => <Row first={f} label="Sunday wallet count" sub="Home asks you to count your wallet if you haven't that week" right={<Toggle value={data.cashCheck !== false} onChange={(v) => update({ cashCheck: v })} label="Sunday cash check" />} /> },
-      { key: 'anim', words: 'animations motion swipe 3d reduce', node: (f) => <Row first={f} label="Animations" sub="3D swipe between tabs, drawing lines, springy buttons" right={<Toggle value={data.animations !== false} onChange={(v) => update({ animations: v })} label="Animations" />} /> },
       { key: 'accent', words: 'accent colour color slate blue teal purple pink', node: (f) => (
         <View style={{ paddingVertical: 12, borderTopWidth: f ? 0 : 1, borderTopColor: th.line, gap: 10 }}>
           <T>Colour</T>

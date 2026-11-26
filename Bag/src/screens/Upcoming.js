@@ -2,12 +2,13 @@
 // week, then later, then People (lent and borrowed). At the top: what you'll
 // have at the end of the month once it's all paid. Repeats live here too,
 // and a calendar sits behind the icon at the top.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
+import { Appear, Backdrop, Count } from '../ui/live';
 import { Amount, Bubble, Card, Chip, DaysRing, Empty, Icon, Row, Squish, T, useTheme, Press as Pressable } from '../ui/kit';
 import { TabTint } from '../ui/parts';
 import { Calendar } from '../ui/calendar';
@@ -89,6 +90,8 @@ export default function Upcoming({ nonce, filter: startFilter }) {
   // A row: ring with days left, name, amount. Tap for Paid / Skip and the
   // details; hold to change it.
   const [openKey, setOpenKey] = useState(null);
+  const rowN = useRef(0);
+  rowN.current = 0;
   const rowFor = (it) => {
     const row = comingRow(it, data);
     const r = itemRecord(it);
@@ -116,7 +119,7 @@ export default function Upcoming({ nonce, filter: startFilter }) {
     if (rec && isOpen(rec)) acts.push(btn(rec.type === 'iowe' ? 'Paid back' : 'Got it back', () => nav.openSheet('settle', { id: rec.id }), true));
     acts.push(btn('Open', () => open(it)));
     return (
-      <View key={it.key} style={{ borderRadius: 16, marginTop: 6, backgroundColor: isOpenRow ? th.card : alpha(toJar ? th.gold : catColor(cat), 0.06) }}>
+      <Appear key={it.key} delay={80 + Math.min(rowN.current++, 8) * 50} style={{ borderRadius: 16, marginTop: 6, backgroundColor: isOpenRow ? th.card : alpha(toJar ? th.gold : catColor(cat), 0.06) }}>
         <Squish onPress={() => setOpenKey(isOpenRow ? null : it.key)} onLongPress={hold} delayLongPress={350} accessibilityLabel={`${row.name}, ${app.money(row.value)}, ${row.sub}. Tap for Paid, hold to change`} style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 9, paddingHorizontal: 10 }}>
           <Bubble emoji={emoji} color={toJar ? th.gold : catColor(cat)} size={36} />
           <View style={{ flex: 1 }}>
@@ -134,7 +137,7 @@ export default function Upcoming({ nonce, filter: startFilter }) {
             <View style={{ flexDirection: 'row', gap: 6 }}>{acts}</View>
           </View>
         ) : null}
-      </View>
+      </Appear>
     );
   };
 
@@ -175,6 +178,7 @@ export default function Upcoming({ nonce, filter: startFilter }) {
   return (
     <View style={{ flex: 1, backgroundColor: th.bg }}>
       <TabTint tab="Upcoming" />
+      <Backdrop />
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 12, paddingTop: insets.top + 10, paddingBottom: 6 }}>
         <T size={28} serif style={{ flex: 1 }}>Upcoming</T>
         <Squish onPress={() => setView(view === 'calendar' ? 'list' : 'calendar')} accessibilityLabel={view === 'calendar' ? 'Show the list' : 'Show the calendar'} style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: view === 'calendar' ? th.chipOn : th.soft, alignItems: 'center', justifyContent: 'center' }}>
@@ -189,7 +193,7 @@ export default function Upcoming({ nonce, filter: startFilter }) {
           </Svg>
           <Pressable onPress={() => setCardOpen(!cardOpen)} accessibilityRole="button" accessibilityState={{ expanded: cardOpen }} accessibilityLabel={`By ${fmtShort(monthEnd)} you'll have ${app.money(after)}. Tap for the next 3 weeks`} style={{ alignItems: 'center' }}>
             <T size={10.5} color={th.muted} style={{ letterSpacing: 1.2 }}>BY {fmtShort(monthEnd).toUpperCase()} YOU'LL HAVE</T>
-            <T size={36} serif color={after < 0 ? th.out : th.ink} style={{ lineHeight: 44 }}>{app.money(after)}</T>
+            <Count size={36} serif color={after < 0 ? th.out : th.ink} style={{ lineHeight: 44 }} value={after} fmt={(v) => app.money(v)} />
             {cardOpen ? <T size={12.5} color={th.muted} center>{app.money(balance)} now{ahead.count ? `, after ${upcomingWords(ahead, data, app.money)}` : ', nothing else due this month'}</T>
               : <T size={11} color={th.faint}>Tap for the next 3 weeks</T>}
           </Pressable>

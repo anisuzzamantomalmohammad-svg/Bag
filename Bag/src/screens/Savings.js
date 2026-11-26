@@ -33,7 +33,7 @@ export default function Savings() {
   const source = (a) => defaultIn(data, a.jar === 'cash' ? 'cash' : 'bank');
 
   return (
-    <Screen title="🫙 Savings">
+    <Screen title="Savings">
       <Appear>
         <Card style={{ alignItems: 'center' }}>
           <T size={11} color={th.faint} style={{ letterSpacing: 1.3 }}>IN THE JARS</T>

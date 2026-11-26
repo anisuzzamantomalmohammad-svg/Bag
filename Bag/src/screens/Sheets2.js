@@ -14,13 +14,15 @@ import { LOOKS } from '../ui/looks';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'];
 
-function Pad({ onKey, minus }) {
+// Always has a decimal point. A bank that's overdrawn gets a separate
+// minus switch next to the number instead of losing the point.
+function Pad({ onKey }) {
   const th = useTheme();
-  const keys = minus ? [...KEYS.slice(0, 9), '−', '0', 'del'] : KEYS;
+  const keys = KEYS;
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
       {keys.map((k) => (
-        <Pressable key={k} onPress={() => { feel.tap(); onKey(k); }} accessibilityRole="button" accessibilityLabel={k === 'del' ? 'Delete' : k}
+        <Pressable key={k} onPress={() => onKey(k)} accessibilityRole="button" accessibilityLabel={k === 'del' ? 'Delete' : k}
           style={({ pressed }) => ({ width: '31.8%', height: 46, borderRadius: 14, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
           {k === 'del' ? <Icon name="delete" size={20} color={th.ink} /> : <T size={20}>{k}</T>}
         </Pressable>
@@ -56,6 +58,7 @@ export function CheckSheet({ p, done }) {
   const [cur, setCur] = useState({ amount: '', name: '', categoryId: null, description: '' });
   if (!acc) return null;
   const cash = groupOf(acc) === 'cash';
+  const minusOk = !cash;
   const real = v === '' || v === '-' ? null : Number(v);
   const gap = real === null || Number.isNaN(real) ? 0 : round2(real - expected);
   const way = dir || (gap < 0 ? 'out' : 'in');
@@ -86,7 +89,15 @@ export function CheckSheet({ p, done }) {
   return (
     <View style={{ gap: 10 }}>
       <T size={13.5} color={th.muted} center>Bag thinks <T size={13.5} weight="semi">{money(expected, { currency: acc.currency })}</T>{p.jarNote ? ` (with ${p.jarNote})` : ''}</T>
-      <T serif size={44} center style={{ lineHeight: 54 }}>{v === '' ? <T serif size={44} color={th.faint2}>0</T> : v.replace('-', '−')}</T>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+        <T serif size={44} center style={{ lineHeight: 54 }}>{v === '' || v === '-' ? <T serif size={44} color={th.faint2}>{v === '-' ? '−0' : '0'}</T> : v.replace('-', '−')}</T>
+        {minusOk ? (
+          <Pressable onPress={() => setV(typeKey(v, '−'))} accessibilityRole="button" accessibilityLabel={v.startsWith('-') ? 'Make it positive' : 'Make it negative (overdrawn)'} hitSlop={8}
+            style={{ height: 32, paddingHorizontal: 10, borderRadius: 10, backgroundColor: v.startsWith('-') ? alpha(th.out, 0.18) : th.soft, justifyContent: 'center' }}>
+            <T size={14} weight="semi" color={v.startsWith('-') ? th.out : th.muted}>{v.startsWith('-') ? '− overdrawn' : '+/−'}</T>
+          </Pressable>
+        ) : null}
+      </View>
       {real !== null && gap !== 0 ? (
         <View style={{ borderRadius: 14, padding: 10, backgroundColor: alpha(gap < 0 ? th.out : th.in, 0.1), gap: 8 }}>
           <T size={13} center>Gap <T size={15} weight="semi" color={gap < 0 ? th.out : th.in}>{gap > 0 ? '+' : '−'}{fmt(Math.abs(gap))}</T> ({gap < 0 ? 'less' : 'more'} than Bag thinks)</T>
@@ -122,7 +133,7 @@ export function CheckSheet({ p, done }) {
           ) : null}
         </View>
       ) : real !== null ? <T size={13.5} color={th.in} weight="semi" center>✓ Spot on</T> : null}
-      <Pad minus={!cash} onKey={(k) => setV((x) => typeKey(x, k))} />
+      <Pad onKey={(k) => setV((x) => typeKey(x, k))} />
       <Button label={real === null ? (cash ? 'Type what you have' : 'Type what it says') : gap === 0 ? "Yes, that's right" : 'Confirm and record'} onPress={save} disabled={real === null} />
     </View>
   );

@@ -14,6 +14,7 @@ import { AppProvider, useApp } from './src/state/store';
 import { NavCtx } from './src/nav';
 import { Toast, useBackHandler } from './src/ui/kit';
 import { TabBar } from './src/ui/parts';
+import { ShownCtx } from './src/ui/live';
 import HomeScreen from './src/screens/Home';
 import RecordsScreen from './src/screens/Records';
 import UpcomingScreen from './src/screens/Upcoming';
@@ -77,6 +78,9 @@ function Shell() {
   const [tab, setTabState] = useState('Home');
   const [tabParams, setTabParams] = useState({});
   const [stack, setStack] = useState([]);
+  // Counts each time a tab comes into view, so its cards fold in again.
+  const [shownN, setShownN] = useState({ Home: 1 });
+  useEffect(() => { setShownN((m) => ({ ...m, [tab]: (m[tab] || 0) + 1 })); }, [tab]);
   const [sheet, setSheet] = useState(null);
 
   // Tabs can be opened with filters, e.g. Records with only cash out this month.
@@ -184,7 +188,7 @@ function Shell() {
   const pos = useRef(new Animated.Value(0)).current;
   const tabRef = useRef(tab);
   tabRef.current = tab;
-  const motion = app.data.animations !== false;
+  const motion = !app.data.reduceMotion;
   useEffect(() => {
     const i = TAB_ORDER.indexOf(tab);
     if (motion) Animated.spring(pos, { toValue: i, useNativeDriver: native, damping: 20, stiffness: 180, mass: 0.9 }).start();
@@ -228,7 +232,9 @@ function Shell() {
     } : { opacity: tab === id ? 1 : 0, transform: [{ translateX: tab === id ? 0 : W * 2 }] };
     return (
       <Animated.View key={id} pointerEvents={tab === id ? 'auto' : 'none'} style={[StyleSheet.absoluteFill, { backfaceVisibility: 'hidden' }, style]}>
-        <Tab {...(tab === id ? tabParams : {})} active={tab === id} />
+        <ShownCtx.Provider value={tab === id && !topOpen ? shownN[id] || 1 : 0}>
+          <Tab {...(tab === id ? tabParams : {})} active={tab === id} />
+        </ShownCtx.Provider>
       </Animated.View>
     );
   });

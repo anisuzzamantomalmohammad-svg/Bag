@@ -92,6 +92,28 @@ export function Row({ label, sub, value, valueColor, left, right, onPress, first
   );
 }
 
+// Some newer emoji (like 🫙) make Android measure the whole line wrong, so
+// the words after it vanish. A label that starts with an emoji draws the
+// emoji on its own, then the words.
+export function splitEmoji(label) {
+  if (typeof label !== 'string') return [null, label];
+  const chars = Array.from(label);
+  const first = chars[0] || '';
+  const cp = first.codePointAt(0) || 0;
+  if (cp >= 0x2190 && chars[1] === ' ') return [first, chars.slice(2).join('')];
+  return [null, label];
+}
+export function EmojiLabel({ text, size = 14, ...rest }) {
+  const [emoji, words] = splitEmoji(text);
+  if (!emoji) return <T size={size} numberOfLines={1} {...rest}>{words}</T>;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+      <Text style={{ fontSize: size, lineHeight: size * 1.35 }} allowFontScaling={false}>{emoji}</Text>
+      <T size={size} numberOfLines={1} {...rest}>{words}</T>
+    </View>
+  );
+}
+
 export function Chip({ label, on, onPress, style, icon }) {
   const th = useTheme();
   return (
@@ -105,7 +127,7 @@ export function Chip({ label, on, onPress, style, icon }) {
       }, style]}
     >
       {icon ? <Icon name={icon} size={15} color={on ? th.chipOnInk : th.muted} /> : null}
-      <T size={14} weight={on ? 'semi' : 'medium'} color={on ? th.chipOnInk : th.muted}>{label}</T>
+      <EmojiLabel text={label} size={14} weight={on ? 'semi' : 'medium'} color={on ? th.chipOnInk : th.muted} />
     </Pressable>
   );
 }
@@ -345,11 +367,16 @@ export function Header({ title, back = true, onBack, right, big }) {
 }
 
 // A full screen: safe area, header, scrolling body.
+// live.js fills this in, so screens get the floating coins without kit
+// importing live (which imports kit).
+export const ScreenBack = { C: null };
+
 export function Screen({ title, back = true, onBack, right, children, footer, big, scroll = true, contentStyle }) {
   const th = useTheme();
   const insets = useSafeAreaInsets();
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: th.bg, paddingTop: insets.top }}>
+      {back !== 'close' && ScreenBack.C ? <ScreenBack.C /> : null}
       {title !== undefined ? <Header title={title} back={back} onBack={onBack} right={right} big={big} /> : null}
       {scroll ? (
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[{ paddingHorizontal: 16, paddingBottom: (footer ? 16 : 32) + (back ? insets.bottom : 0), gap: 12 }, contentStyle]}>
@@ -421,7 +448,7 @@ export function Toast({ toast, onHide }) {
       pointerEvents={toast.action ? 'box-none' : 'none'}
       accessibilityLiveRegion="polite"
       style={{
-        position: 'absolute', left: 16, right: 80, bottom: insets.bottom + 68, zIndex: 50, opacity: a,
+        position: 'absolute', left: 16, right: 80, bottom: insets.bottom + 104, zIndex: 50, opacity: a,
         transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
         backgroundColor: dark ? '#D6E3F0' : '#1A2230', borderRadius: 14, minHeight: 50, paddingLeft: 16, paddingRight: 6, flexDirection: 'row', alignItems: 'center',
       }}

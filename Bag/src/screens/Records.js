@@ -11,6 +11,7 @@ import { Bubble, Card, Chip, Chips, Field, Icon, Squish, T, useTheme, Press as P
 import { IconButton, RecordRow, TabTint } from '../ui/parts';
 import { effectiveDate, filterRecords, flowsOf, isPending, live } from '../lib/ledger';
 import { groupOf } from '../lib/plan';
+import { Appear, Backdrop, Count } from '../ui/live';
 import { MONTHS_LONG, addMonths, fmtDate, lastDayOfMonth, parseYmd, periodOf, today } from '../lib/dates';
 import { round2 } from '../lib/money';
 import { accountColor, accountEmoji, alpha, catColor, tint } from '../lib/look';
@@ -203,20 +204,20 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
       ) : null}
       <Pressable onPress={() => setMore(!more)} accessibilityRole="button" accessibilityState={{ expanded: more }} accessibilityLabel={`Cash in ${totals.income}, cash out ${totals.expense}. Tap for more`} style={{ alignItems: 'center', paddingVertical: 2 }}>
         <T size={13}>
-          <T size={13} color={th.in}>▲ {app.money(totals.income)}</T>
+          <Count size={13} color={th.in} value={totals.income} fmt={(v) => `▲ ${app.money(v)}`} />
           <T size={13} color={th.faint}>   ·   </T>
-          <T size={13} color={th.out}>▼ {app.money(totals.expense)}</T>
+          <Count size={13} color={th.out} value={totals.expense} fmt={(v) => `▼ ${app.money(v)}`} />
         </T>
         {!more ? <T size={10.5} color={th.faint} style={{ marginTop: 2 }}>{dayPick ? fmtDate(dayPick, { weekday: true, year: false }) : 'Tap for the split and categories'}</T> : null}
       </Pressable>
       {more ? (
         <View style={{ paddingHorizontal: 2, gap: 8 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Pressable onPress={() => setCounts(counts === 'income' ? null : 'income')} accessibilityRole="button" accessibilityLabel="Show cash in only" hitSlop={6}>
+            <Pressable onPress={() => { setCounts(counts === 'income' ? null : 'income'); setType('all'); }} accessibilityRole="button" accessibilityLabel="Show cash in only" hitSlop={6}>
               <T size={12.5} color={th.in} weight={counts === 'income' ? 'semi' : 'regular'}>Cash in only</T>
             </Pressable>
             <T size={12.5} color={th.faint}>{net ? `Net ${app.money(net, { plus: net > 0 })}` : ''}</T>
-            <Pressable onPress={() => setCounts(counts === 'expense' ? null : 'expense')} accessibilityRole="button" accessibilityLabel="Show cash out only" hitSlop={6}>
+            <Pressable onPress={() => { setCounts(counts === 'expense' ? null : 'expense'); setType('all'); }} accessibilityRole="button" accessibilityLabel="Show cash out only" hitSlop={6}>
               <T size={12.5} color={th.out} weight={counts === 'expense' ? 'semi' : 'regular'}>Cash out only</T>
             </Pressable>
           </View>
@@ -236,7 +237,7 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
       {filterOpen ? (
         <Card pad={0} style={{ paddingHorizontal: 16, paddingTop: 14 }}>
           <Chips style={{ paddingBottom: 12 }}>
-            {TYPES.map(([t, l]) => <Chip key={t} label={l} on={type === t} onPress={() => setType(t)} />)}
+            {TYPES.map(([t, l]) => <Chip key={t} label={l} on={type === t} onPress={() => { setType(t); setCounts(null); }} />)}
           </Chips>
           <Pressable onPress={pickCategory} accessibilityRole="button" style={row}>
             <T style={{ flex: 1 }}>Category</T><T size={14} color={th.muted}>{cat ? `${cat.emoji} ${cat.name}` : 'Any'}</T><Icon name="chevron-right" size={18} color={th.faint2} />
@@ -266,6 +267,7 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
   return (
     <View style={{ flex: 1, backgroundColor: th.bg }}>
       <TabTint tab="Records" />
+      <Backdrop />
       {picked ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: insets.top + 10, paddingBottom: 6, gap: 8 }}>
           <RoundIcon name="x" label="Stop selecting" onPress={exitSelect} />
@@ -301,7 +303,7 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
           item.records.forEach((r) => flowsOf(r).forEach((f) => { if (f.count && f.date === item.date) dayNet += f.home; }));
           const hl = dayPick === item.date;
           return (
-            <View style={{ paddingLeft: 20 }}>
+            <Appear delay={60 + Math.min(index, 7) * 55} off={index > 7} style={{ paddingLeft: 20 }}>
               <View style={{ position: 'absolute', left: 5, top: index === 0 ? 14 : 0, bottom: 0, width: 2, borderRadius: 1, backgroundColor: th.line }} />
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 14, marginBottom: 2 }}>
                 <View style={{ position: 'absolute', left: -19, top: 3, width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: th.lineB, backgroundColor: hl ? th.lineB : th.bg }} />
@@ -319,7 +321,7 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
                   <T weight="medium" color={Number(a.opening) < 0 ? th.out : th.ink}>{app.money(Number(a.opening), { currency: a.currency })}</T>
                 </Squish>
               ))}
-            </View>
+            </Appear>
           );
         }}
       />

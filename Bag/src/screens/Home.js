@@ -9,10 +9,10 @@ import { Animated, Easing, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Balance, Bar, Bubble, Button, Card, DaysRing, Icon, Ring, Row, Seg, Squish, T, useTheme, Press as Pressable } from '../ui/kit';
+import { Balance, Bar, Bubble, Button, Card, DaysRing, EmojiLabel, Icon, Ring, Row, Seg, Squish, T, useTheme, Press as Pressable } from '../ui/kit';
 import { RecordRow, TabTint, recordEmoji } from '../ui/parts';
 import BalanceLine from '../ui/line';
-import { Appear, Backdrop, Tilt } from '../ui/live';
+import { Appear, Backdrop, Tilt, useCountUp } from '../ui/live';
 import { balanceLine, budgetStatus, byNewest, comingUp, daysUntil, displayName, dueToAsk, homeOf, incomeExpense, isOpen, itemEffect, itemRecord, live, liveRecords, netWorth, otherMoves, recentRecords, accountBalance } from '../lib/ledger';
 import { DAY_NAMES, addDays, fmtDate, fmtShort, parseYmd, periodOf, today } from '../lib/dates';
 import { fmtApprox, round2 } from '../lib/money';
@@ -216,28 +216,9 @@ function SundayCount({ style, onCount }) {
   );
 }
 
-// The big number counts to its new value instead of jumping.
-function useCount(target, ms = 600) {
-  const [v, setV] = useState(target);
-  const from = useRef(target);
-  useEffect(() => {
-    const a = from.current;
-    if (a === target) return undefined;
-    const t0 = Date.now();
-    let raf;
-    const tick = () => {
-      const k = Math.min(1, (Date.now() - t0) / ms);
-      const e = 1 - Math.pow(1 - k, 3);
-      const cur = a + (target - a) * e;
-      from.current = cur;
-      setV(cur);
-      if (k < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target]);
-  return v;
-}
+// The big number counts up from 0 when Home comes into view, and slides to
+// its new value when it changes.
+const useCount = (target, ms = 700) => useCountUp(target, ms);
 
 function BigNumber({ value, color, text }) {
   const th = useTheme();
@@ -439,7 +420,7 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const { data, flows, money, second, homePerUnit } = app;
   const now = today();
-  const motion = data.animations !== false && !data.reduceMotion;
+  const motion = !data.reduceMotion;
   const accounts = live(data.accounts);
   const groups = useMemo(() => homeGroups(data, { flows, homePerUnit }), [data.accounts, flows, homePerUnit]);
 
@@ -486,6 +467,24 @@ export default function Home() {
   const rangeFrom = period === 'total' ? '0000-01-01' : pr(period).from;
   const accFlows = useMemo(() => (ids ? flows.filter((f) => ids.includes(f.accountId)) : flows), [flows, idsKey]);
   const ie = useMemo(() => incomeExpense(data, rangeFrom, now, accFlows), [accFlows, rangeFrom, now]);
+  // Looking at the jars: what went in and out of them, not cash in and out.
+  const jarView = focus.type === 'group' && focus.id === 'savings';
+  const jarMoves = useMemo(() => {
+    let put = 0;
+    let out = 0;
+    if (!jarView) return { put, out };
+    const want = new Set(ids || []);
+    flows.forEach((f) => {
+      if (!want.has(f.accountId) || f.date > now || (period !== 'total' && f.date < rangeFrom)) return;
+      if (f.home > 0) put += f.home; else out -= f.home;
+    });
+    return { put: Math.round(put * 100) / 100, out: Math.round(out * 100) / 100 };
+  }, [jarView, flows, ids && ids.join(), rangeFrom, now, period]);
+  // Tiles open Records showing the same accounts and dates.
+  const openRecs = (counts) => () => nav.setTab('Records', {
+    counts: counts || null, from: period === 'total' ? null : rangeFrom, to: now,
+    group: focus.type === 'group' ? focus.id : null, accountId: focus.type === 'acc' ? focus.id : null,
+  });
   const other = useMemo(() => otherMoves(period === 'total' ? null : rangeFrom, now, accFlows), [accFlows, rangeFrom, now]);
   const shownNow = ids ? round2(ids.reduce((t, id) => t + bal(data.accounts[id]), 0)) : total;
 
@@ -718,9 +717,19 @@ export default function Home() {
             {cardOn('month') ? (
               <Appear delay={260}>
                 <View style={{ flexDirection: 'row', gap: 6, marginTop: 12 }}>
-                  <Tile label="Cash in" value={ie.income} kind="in" icon="arrow-up" onPress={() => nav.setTab('Records', { counts: 'income', from: period === 'total' ? null : rangeFrom, to: now })} />
-                  <Tile label="Cash out" value={-ie.expense} kind="out" icon="arrow-down" onPress={() => nav.setTab('Records', { counts: 'expense', from: period === 'total' ? null : rangeFrom, to: now })} />
-                  <Tile label="Total" value={net} kind="total" plus onPress={toggleDetails} />
+                  {jarView ? (
+                    <>
+                      <Tile label="Put in" value={jarMoves.put} kind="in" icon="arrow-up" onPress={openRecs()} />
+                      <Tile label="Taken out" value={-jarMoves.out} kind="out" icon="arrow-down" onPress={openRecs()} />
+                      <Tile label="Saved" value={jarMoves.put - jarMoves.out} kind="total" plus onPress={toggleDetails} />
+                    </>
+                  ) : (
+                    <>
+                      <Tile label="Cash in" value={ie.income} kind="in" icon="arrow-up" onPress={openRecs('income')} />
+                      <Tile label="Cash out" value={-ie.expense} kind="out" icon="arrow-down" onPress={openRecs('expense')} />
+                      <Tile label="Total" value={net} kind="total" plus onPress={toggleDetails} />
+                    </>
+                  )}
                 </View>
               </Appear>
             ) : null}
@@ -787,7 +796,7 @@ function Pill({ label, sub, on, onPress, onLongPress, color, dashed, small, roun
         borderWidth: dashed || (small && !on && !color) ? 1.2 : 0, borderStyle: dashed ? 'dashed' : 'solid', borderColor: th.lineStrong,
         alignItems: 'center', justifyContent: 'center',
       }}>
-      <T size={small ? 11.5 : 12.5} weight={on ? 'semi' : 'medium'} color={on ? th.chipOnInk : dashed ? th.faint : color ? tint(color, th.mode === 'dark' ? 0.25 : -0.35) : th.muted}>{label}</T>
+      <EmojiLabel text={label} size={small ? 11.5 : 12.5} weight={on ? 'semi' : 'medium'} color={on ? th.chipOnInk : dashed ? th.faint : color ? tint(color, th.mode === 'dark' ? 0.25 : -0.35) : th.muted} />
     </Squish>
   );
 }

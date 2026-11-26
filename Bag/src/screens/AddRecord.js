@@ -212,7 +212,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
     if (Object.keys(e).length) { setErrors(e); return; }
     const draft = {
       id: old ? old.id : undefined,
-      type, kind: isDebt ? kind : null, amount: amtUse, currency, name: nameUse.trim() || (isDebt ? who.trim() : '') || (type === 'transfer' ? 'Transfer' : ''),
+      type, kind: isDebt ? kind : null, amount: amtUse, currency, name: nameUse.trim() || (isDebt ? who.trim() : '') || '',
       categoryId: type === 'transfer' ? null : categoryId, date: isDebt ? (old ? old.date : today()) : date, accountId,
       toAccountId: type === 'transfer' ? toAccountId : null,
       toAmount: type === 'transfer' ? (crossTransfer ? parseAmount(toAmount) || null : null) : null,
@@ -253,7 +253,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
   const onColor = th.mode === 'dark' ? '#0E131A' : '#FFFFFF';
   const bump = useRef(new Animated.Value(1)).current;
   const shake = useRef(new Animated.Value(0)).current;
-  const motion = data.animations !== false;
+  const motion = !data.reduceMotion;
   const press = (k) => {
     dirty.current = true;
     setErrors({});
@@ -291,7 +291,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
     }
     if (!inIt) setter(pl.accounts.length > 1 ? (defaultIn(data, pl.group) || pl.accounts[0].id) : pl.accounts[0].id);
   };
-  const placeAcc = (pl, cur) => pl.accounts.find((a) => a.id === cur) || data.accounts[defaultIn(data, pl.group)] || pl.accounts[0];
+  const placeAcc = (pl, cur) => (pl.accounts.length === 1 ? pl.accounts[0] : pl.accounts.find((a) => a.id === cur) || data.accounts[defaultIn(data, pl.group)] || pl.accounts[0]);
   const accLabel = type === 'income' || type === 'iowe' ? 'Into' : type === 'owed' ? 'From' : 'Paid from';
   const swap = () => { if (!accountId || !toAccountId) return; dirty.current = true; const f = accountId; setAccountId(toAccountId); setToAccountId(f); };
   const datePill = date === today() ? 'Today' : fmtShort(date, { weekday: true });
@@ -425,8 +425,8 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
           <AccButton a={toAcc} label="To" on={!!toAcc} app={app} th={th} onPress={() => pickAccount(setToAccountId, 'To')} />
         </View>
       ) : (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <T size={12} color={th.faint} style={{ width: 58 }}>{accLabel}</T>
+        <View style={{ gap: 6 }}>
+          <T size={12} color={th.faint} style={{ marginLeft: 4 }}>{accLabel}</T>
           {places.length <= 2 ? (
             <View style={{ flex: 1, flexDirection: 'row', gap: 8 }}>
               {places.map((pl) => <AccButton key={pl.key} a={placeAcc(pl, accountId)} more={pl.accounts.length > 1} on={pl.accounts.some((a) => a.id === accountId)} app={app} th={th} onPress={() => pressPlace(pl, accountId)} />)}

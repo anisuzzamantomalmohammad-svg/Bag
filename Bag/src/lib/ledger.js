@@ -43,9 +43,17 @@ const waiting = (r) => r.status === 'pending' || r.status === 'scheduled';
 
 // What to call a record: its name, or its category when it has none.
 export function displayName(r, data) {
-  if (r && r.name) return r.name;
+  if (r && r.name && !(r.type === 'transfer' && r.name === 'Transfer')) return r.name;
   if (!r) return '';
-  if (r.type === 'transfer') return 'Transfer';
+  if (r.type === 'transfer') {
+    // "Bank → Bank savings", so a move says where the money went.
+    const acc = (data && data.accounts) || {};
+    const a = acc[r.accountId];
+    const b = acc[r.toAccountId];
+    if (b && b.kind === 'savings' && a) return `Into ${b.name}`;
+    if (a && a.kind === 'savings' && b) return `Out of ${a.name}`;
+    return a && b ? `${a.name} → ${b.name}` : 'Move';
+  }
   const c = data && data.categories ? data.categories[r.categoryId] : null;
   if (c && !c.deleted) return c.name;
   return r.who || TYPE_LABEL[r.type] || 'Record';

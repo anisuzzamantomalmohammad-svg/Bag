@@ -20,7 +20,7 @@ import { accountBalance, balanceAtMonthEnds, categoryTotals, live, liveRecords, 
 import { MONTHS, addDays, addMonths, fmtDate, fmtShort, lastDayOfMonth, monthLabel, parseYmd, periodOf, today } from '../lib/dates';
 import { fmtApprox, round2 } from '../lib/money';
 import { jars, savedIn, savedLine } from '../lib/plan';
-import { Appear } from '../ui/live';
+import { Appear, Backdrop, Tilt, useShown } from '../ui/live';
 
 const short = (s) => { const d = parseYmd(s); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
 
@@ -130,6 +130,7 @@ export default function Reports({ nonce, seg: startSeg }) {
   return (
     <View style={{ flex: 1, backgroundColor: th.bg }}>
       <TabTint tab="Reports" />
+      <Backdrop />
       <View style={{ paddingLeft: 20, paddingTop: insets.top + 10, paddingBottom: 6 }}><T size={28} serif>Reports</T></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 + insets.bottom, gap: 14 }}>
         <Seg items={[{ id: 'spending', label: 'Spending' }, { id: 'budgets', label: 'Budgets' }, { id: 'savings', label: 'Savings' }]} value={tab === 'goals' ? 'savings' : tab} onChange={setTab} />
@@ -143,13 +144,13 @@ export default function Reports({ nonce, seg: startSeg }) {
             <StepBtn icon="chevron-right" label="Later" disabled={idx >= series.length - 1} onPress={() => setSel(idx + 1)} />
           </View>
         ) : null}
-        <MoneyGraph saved={savedPts} lines={lines} word={view === 'weekly' ? 'this week' : view === 'monthly' ? 'this month' : `since ${fmtShort(first)}`} total={view === 'cumulative'} money={app.money} motion={data.animations !== false} />
+        <Appear delay={60}><Tilt depth={0.6}><MoneyGraph saved={savedPts} lines={lines} word={view === 'weekly' ? 'this week' : view === 'monthly' ? 'this month' : `since ${fmtShort(first)}`} total={view === 'cumulative'} money={app.money} motion={!data.reduceMotion} /></Tilt></Appear>
 
         <View style={{ flexDirection: 'row', gap: 6 }}>
           <Chip label="Cash out" on={!showIncome} onPress={() => setShowIncome(false)} />
           <Chip label="Cash in" on={showIncome} onPress={() => setShowIncome(true)} />
         </View>
-        {slices.length ? <Donut slices={slices} label={showIncome ? 'CASH IN' : 'CASH OUT'} money={app.money} onOpen={(k) => k !== 'other' && k !== 'none' && nav.push('category', { id: k, from: pFrom, to: pTo })} />
+        {slices.length ? <Appear delay={160}><Donut slices={slices} label={showIncome ? 'CASH IN' : 'CASH OUT'} money={app.money} onOpen={(k) => k !== 'other' && k !== 'none' && nav.push('category', { id: k, from: pFrom, to: pTo })} /></Appear>
           : <T size={14} color={th.faint}>{showIncome ? 'No cash in' : 'No cash out'} {view === 'cumulative' ? 'yet' : 'in this period'}</T>}
 
         {cats.length ? (
@@ -268,10 +269,12 @@ function MoneyGraph({ lines, word, total, money, motion, saved }) {
     }
     return { x, y, n, path, area, crossI, gold };
   }, [w, lines, saved]);
+  const shown = useShown();
   useEffect(() => {
+    if (shown === 0) return;
     draw.setValue(motion ? 0 : 1);
     if (motion) Animated.timing(draw, { toValue: 1, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
-  }, [lines.in, lines.out, lines.pts.length, motion]);
+  }, [lines.in, lines.out, lines.pts.length, motion, shown]);
   const last = lines.pts[lines.pts.length - 1] || { in: 0, out: 0 };
   const first = lines.pts[0] || { date: '' };
   return (
@@ -279,7 +282,7 @@ function MoneyGraph({ lines, word, total, money, motion, saved }) {
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <KeyCard color={th.lineIn} label={lines.carried ? `Money in (${money(lines.carried)} carried)` : total ? 'Money in, with opening' : `Money in ${word}`} value={money(lines.in)} />
         <KeyCard color={th.out} label={`Spent ${word}`} value={money(lines.out)} />
-        {saved ? <KeyCard color={th.gold} label={`🫙 Saved ${word}`} value={money(saved.saved, { plus: saved.saved > 0 })} /> : null}
+        {saved ? <KeyCard color={th.gold} label={`Saved ${word}`} value={money(saved.saved, { plus: saved.saved > 0 })} /> : null}
       </View>
       <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" accessibilityLabel={`Money in ${money(lines.in)} and money out ${money(lines.out)}. The gap, ${money(lines.gap)}, is what you have. Tap for details.`} onLayout={(e) => setW(e.nativeEvent.layout.width)} style={{ height: H, marginTop: 6 }}>
         {g ? (
@@ -344,7 +347,8 @@ function Donut({ slices, label, money, onOpen }) {
   const [sel, setSel] = useState(-1);
   const sweep = useRef(new Animated.Value(0)).current;
   const total = slices.reduce((t, s) => t + s.total, 0) || 1;
-  useEffect(() => { setSel(-1); sweep.setValue(0); Animated.timing(sweep, { toValue: 1, duration: 1100, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start(); }, [total, slices.length]);
+  const shownD = useShown();
+  useEffect(() => { if (shownD === 0) return; setSel(-1); sweep.setValue(0); Animated.timing(sweep, { toValue: 1, duration: 1100, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start(); }, [total, slices.length, shownD]);
   const R = 50;
   const C = 2 * Math.PI * R;
   let acc = 0;
@@ -437,7 +441,7 @@ function SavingsReport() {
     <>
       <Appear>
         <Card>
-          <T size={11} color={th.faint} style={{ letterSpacing: 1.3 }}>🫙 IN THE JARS</T>
+          <T size={11} color={th.faint} style={{ letterSpacing: 1.3 }}>IN THE JARS</T>
           <T serif size={28} color={th.gold}>{money(total)}</T>
           <View onLayout={(e) => setW(e.nativeEvent.layout.width)} style={{ height: H, marginTop: 6 }}>
             {d ? (

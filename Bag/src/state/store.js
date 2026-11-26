@@ -313,7 +313,7 @@ export function AppProvider({ children }) {
       type,
       kind: type === 'iowe' || type === 'owed' ? draft.kind || defaultKind(type) : null,
       amount: round2(Math.abs(Number(draft.amount) || 0)),
-      name: String(draft.name || '').trim() || (type === 'transfer' ? 'Transfer' : ((d.categories[draft.categoryId] || {}).name) || ''),
+      name: String(draft.name || '').trim() || (type === 'transfer' ? '' : ((d.categories[draft.categoryId] || {}).name) || ''),
       currency,
       rate,
       rateCheck: foreign && !draft.rateManual && !savedRate(draft.date, currency, d.homeCurrency),
