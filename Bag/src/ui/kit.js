@@ -2,7 +2,7 @@
 // inputs, sheets and the toast. Everything reads the theme, so light, dark
 // and the accent colour come for free.
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, BackHandler, Easing, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Animated, BackHandler, Easing, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '../state/store';
@@ -108,7 +108,7 @@ export function EmojiLabel({ text, size = 14, ...rest }) {
   if (!emoji) return <T size={size} numberOfLines={1} {...rest}>{words}</T>;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-      <Text style={{ fontSize: size, lineHeight: size * 1.35 }} allowFontScaling={false}>{emoji}</Text>
+      <Text style={{ fontSize: size, lineHeight: size * 1.35, minWidth: size * 1.4, textAlign: 'center', includeFontPadding: false }} allowFontScaling={false}>{emoji}</Text>
       <T size={size} numberOfLines={1} {...rest}>{words}</T>
     </View>
   );
@@ -366,6 +366,25 @@ export function Header({ title, back = true, onBack, right, big }) {
   );
 }
 
+// Android draws edge to edge, so the window doesn't always shrink for the
+// keyboard (never inside a sheet). This is how much of the screen the
+// keyboard really covers; 0 when the window already made room.
+export function useKeyboardGap() {
+  const { height: winH } = useWindowDimensions();
+  const [gap, setGap] = useState(0);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      const top = e && e.endCoordinates ? e.endCoordinates.screenY : 0;
+      const h = e && e.endCoordinates ? e.endCoordinates.height : 0;
+      setGap(top > 0 ? Math.max(0, Math.min(h, Math.round(winH - top))) : 0);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setGap(0));
+    return () => { show.remove(); hide.remove(); };
+  }, [winH]);
+  return gap;
+}
+
 // A full screen: safe area, header, scrolling body.
 // live.js fills this in, so screens get the floating coins without kit
 // importing live (which imports kit).
@@ -374,8 +393,9 @@ export const ScreenBack = { C: null };
 export function Screen({ title, back = true, onBack, right, children, footer, big, scroll = true, contentStyle }) {
   const th = useTheme();
   const insets = useSafeAreaInsets();
+  const kb = useKeyboardGap();
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: th.bg, paddingTop: insets.top }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: th.bg, paddingTop: insets.top, paddingBottom: kb }}>
       {back !== 'close' && ScreenBack.C ? <ScreenBack.C /> : null}
       {title !== undefined ? <Header title={title} back={back} onBack={onBack} right={right} big={big} /> : null}
       {scroll ? (
@@ -385,7 +405,7 @@ export function Screen({ title, back = true, onBack, right, children, footer, bi
       ) : (
         <View style={[{ flex: 1, paddingHorizontal: 16 }, contentStyle]}>{children}</View>
       )}
-      {footer ? <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 + insets.bottom, backgroundColor: th.bg }}>{footer}</View> : null}
+      {footer ? <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 + (kb ? 0 : insets.bottom), backgroundColor: th.bg }}>{footer}</View> : null}
     </KeyboardAvoidingView>
   );
 }
@@ -398,6 +418,7 @@ export function Sheet({ visible, onClose, title, children, footer }) {
   // the sheet and leaves a gap under it.
   const { height: winH } = useWindowDimensions();
   const a = useRef(new Animated.Value(0)).current;
+  const kb = useKeyboardGap();
   const [shown, setShown] = useState(visible);
   useEffect(() => {
     if (visible) setShown(true);
@@ -412,8 +433,8 @@ export function Sheet({ visible, onClose, title, children, footer }) {
         <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: th.overlay, opacity: a }}>
           <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close" />
         </Animated.View>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Animated.View style={{ backgroundColor: th.card, borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: Math.round(winH * 0.9) - insets.top, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [500, 0] }) }] }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ paddingBottom: kb }}>
+          <Animated.View style={{ backgroundColor: th.card, borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: Math.round(winH * 0.9) - insets.top - kb, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [500, 0] }) }] }}>
             <View style={{ alignItems: 'center', paddingTop: 10 }}>
               <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: th.lineStrong }} />
             </View>

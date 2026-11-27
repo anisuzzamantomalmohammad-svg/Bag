@@ -19,7 +19,7 @@ import { rangeLabel } from './Sheets';
 
 const TYPES = [['all', 'Everything'], ['expense', 'Cash out'], ['income', 'Cash in'], ['transfer', 'Move'], ['people', 'People'], ['upcoming', 'Upcoming']];
 
-export default function Records({ nonce, counts: startCounts, from: startFrom, to: startTo, type: startType, accountId: startAccount, group: startGroup }) {
+export default function Records({ nonce, q: startQ, counts: startCounts, from: startFrom, to: startTo, type: startType, accountId: startAccount, group: startGroup }) {
   const app = useApp();
   const nav = useNav();
   const th = useTheme();
@@ -54,8 +54,8 @@ export default function Records({ nonce, counts: startCounts, from: startFrom, t
     setAccountId(startAccount || null);
     setGroup(startGroup || 'all');
     setCategoryId(null);
-    setQ('');
-    setSearching(false);
+    setQ(startQ || '');
+    setSearching(!!startQ);
   }, [nonce]);
 
   // Searching ignores the dates, so an old record is never missed.

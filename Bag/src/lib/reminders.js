@@ -10,7 +10,7 @@ import * as Notifications from 'expo-notifications';
 import { addDays, fmtDate, parseYmd, relative, ymd } from './dates';
 import { fmtMoney } from './money';
 import { budgetStatus, displayName, isOpen, isPending, live, liveRecords } from './ledger';
-import { paydaysBetween } from './plan';
+import { forecast, paydaysBetween } from './plan';
 import { nextDates } from './repeats';
 
 export const CHANNEL = 'bag-reminders';
@@ -120,6 +120,33 @@ export function plan(data, now = new Date()) {
       const c = (data.categories || {})[tight.b.categoryId];
       const left = Math.max(0, tight.st.limit - tight.st.spent);
       add(`nudge-${sun}`, at(sun, '18:00'), `${c ? `${c.emoji} ${c.name}` : 'A budget'} is nearly used`, `${fmtMoney(left, home, home)} left this ${tight.b.period === 'week' ? 'week' : 'month'}`, { type: 'plan' });
+    }
+  }
+  // Low balance: a few days before the bank looks like going below 0.
+  const lw = data.lowWarn || {};
+  if (lw.on !== false) {
+    try {
+      const fc = forecast(data, { now: today, days: 45 });
+      if (fc && fc.firstNeg && fc.firstNeg > today) {
+        let fire = addDays(fc.firstNeg, -(Number(lw.days) || 3));
+        if (fire < today) fire = today;
+        const x = fc.days[fc.firstNeg];
+        add(`low-${fc.account.id}-${fc.firstNeg}`, at(fire, r.time), `⚠️ ${fc.account.name} may go below 0 ${relative(fc.firstNeg, fire)}`, `About ${fmtMoney(x ? x.end : 0, home, home)} by ${fmtDate(fc.firstNeg, { weekday: true, year: false })}. Tap to see the days.`, { type: 'upcoming', day: fc.firstNeg });
+      }
+    } catch (e) {
+      // the forecast is a nice-to-have
+    }
+  }
+  // 9pm "log today?": only on days with nothing added. Adding something
+  // reschedules, which drops that day's one.
+  const ev = data.evening || {};
+  if (ev.on !== false) {
+    const added = new Set();
+    liveRecords(data).forEach((rec) => { if (rec.createdAt) added.add(ymd(new Date(rec.createdAt))); });
+    for (let k = 0; k < 7; k += 1) {
+      const d = addDays(today, k);
+      if (added.has(d)) continue;
+      add(`evening-${d}`, at(d, ev.time || '21:00'), 'Anything to add today?', 'Nothing in Bag yet today. A coffee, a bus fare?', { type: 'add' });
     }
   }
   return out.sort((a, b) => a.date - b.date).slice(0, 60);

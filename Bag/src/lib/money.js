@@ -43,3 +43,13 @@ export function fmtApprox(n, currency) {
   const big = Math.abs(n) >= 1000;
   return `≈ ${fmt(n, { decimals: big ? 0 : currencyDecimals(currency) })} ${currency}`;
 }
+
+// Typed amounts from the phone's keyboard. Samsung gives a comma, others a
+// dot: either is the decimal point, and only the first one counts.
+export const cleanAmount = (v) => String(v || '').replace(/,/g, '.').replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
+// The same, cut to 2 decimals and 10 digits (Count, Pay some back).
+export const cleanNum = (t) => {
+  const v = cleanAmount(t);
+  const [w, d] = v.split('.');
+  return d === undefined ? w.slice(0, 10) : `${w.slice(0, 10)}.${d.slice(0, 2)}`;
+};

@@ -18,6 +18,7 @@ import { ShownCtx } from './src/ui/live';
 import HomeScreen from './src/screens/Home';
 import RecordsScreen from './src/screens/Records';
 import UpcomingScreen from './src/screens/Upcoming';
+import { NEW_IN } from './src/screens/WhatsNew';
 import ReportsScreen from './src/screens/Reports';
 import Sheets from './src/screens/Sheets';
 import Onboarding from './src/screens/Onboarding';
@@ -155,11 +156,13 @@ function Shell() {
       if (what === 'reports') setTab('Reports');
       if (what === 'owed' || what === 'upcoming') setTab('Upcoming');
       if (what === 'plan') setTab('Reports', { seg: 'budgets' });
-      if (what === 'home') setTab('Home');
+      if (what === 'home') { if (q.focus) app.update({ homeFocus: q.focus, homeAccount: null }); setTab('Home'); }
       return;
     }
     if (p.type === 'record' && p.id) push('record', { id: p.id });
     if (p.type === 'payday') setTab('Home');
+    if (p.type === 'upcoming') setTab('Upcoming', p.day ? { day: p.day } : {});
+    if (p.type === 'add') { setTab('Home'); setTimeout(() => push('add', {}), 150); }
     if (p.type === 'reports') setTab('Reports');
     if (p.type === 'plan') setTab('Reports', { seg: 'budgets' });
     if (p.type === 'pay' && p.id) { setTab('Home'); setTimeout(() => openSheet('confirm', { id: p.id }), 300); }
@@ -173,10 +176,10 @@ function Shell() {
   // What's new, once, after updating to a new version.
   useEffect(() => {
     const d = app.data;
-    if (!d || !d.onboarded || app.locked || d.seenNew === '2.2') return undefined;
+    if (!d || !d.onboarded || app.locked || d.seenNew === NEW_IN) return undefined;
     const h = setTimeout(() => {
       if (Object.keys(d.records || {}).length) push('whatsnew');
-      else app.update({ seenNew: '2.2' });
+      else app.update({ seenNew: NEW_IN });
     }, 1200);
     return () => clearTimeout(h);
   }, [app.data && app.data.onboarded, app.locked]);
@@ -216,6 +219,9 @@ function Shell() {
   }), [W]);
 
   const nav = { tab, setTab, push, pop, popTo, openSheet, closeSheet };
+
+  // Web only: lets the browser checks open any screen directly.
+  if (Platform.OS === 'web' && typeof window !== 'undefined') window.__bagNav = nav;
   const topOpen = stack.some((e) => !e.closing);
   // Every tab stays mounted, so the neighbours are there to turn into view.
   const faces = TAB_ORDER.map((id, i) => {

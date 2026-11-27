@@ -7,7 +7,7 @@ import { BACKUP_KEY, useApp, DEFAULTS } from '../state/store';
 import { useNav } from '../nav';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Bubble, Button, Card, Field, Icon, Label, Row, Screen, Seg, Sheet, Squish, T, Toggle, useTheme, Press as Pressable } from '../ui/kit';
-import { accountColor, accountEmoji } from '../lib/look';
+import { accountColor, accountEmoji, accountKind } from '../lib/look';
 import { initials } from './Home';
 import { currencyName } from '../data/currencies';
 import { fmtDate, ordinal, ymd } from '../lib/dates';
@@ -26,6 +26,7 @@ const VERSION = require('../../app.json').expo.version;
 const SAMPLE = -1234.5;
 const PRIVACY_URL = 'https://anisuzzamantomalmohammad-svg.github.io/Bag/Bag/docs/privacy.html';
 const LOCK_AFTER = [[0, 'Straight away'], [60, 'After 1 minute'], [300, 'After 5 minutes'], [900, 'After 15 minutes']];
+const NEXT_DAYS = [[3, '3 days'], [7, '7 days'], [14, '14 days'], [31, 'A month']];
 const BILL_DAYS = [[0, 'On the day'], [1, '1 day before'], [2, '2 days before'], [3, '3 days before'], [7, 'A week before']];
 const TIMES = ['07:00', '08:00', '09:00', '12:00', '17:00', '19:00', '21:00'];
 const WEEK = [[1, 'Monday'], [0, 'Sunday'], [6, 'Saturday']];
@@ -185,7 +186,25 @@ export default function Settings({ section }) {
       !g ? { key: 'name', words: 'name you', node: (f) => <Row first={f} label="Your name" value={data.ownerName || 'Not set'} onPress={() => nav.openSheet('text', { title: 'Your name', value: data.ownerName, placeholder: 'Name', onPick: (v) => update({ ownerName: v }) })} /> } : null,
       { key: 'lock', words: 'lock fingerprint face pin security', node: (f) => <Row first={f} label="App lock" sub="Fingerprint, face or your phone's PIN" right={<Toggle value={!!data.lock.on} onChange={toggleLock} label="App lock" />} /> },
     ],
+    defaults: [
+      ...[['expense', 'Out from'], ['income', 'In into'], ['moveFrom', 'Move from'], ['moveTo', 'Move to'], ['saveFrom', 'Save button from'], ['saveTo', 'Save button into']].map(([k, label]) => ({
+        key: `def-${k}`, words: `default account star ${label} out in move save`,
+        node: (f) => {
+          const id = (data.typeDefaults || {})[k];
+          const a = id && data.accounts[id] && !data.accounts[id].deleted ? data.accounts[id] : null;
+          const pool = k === 'saveTo' ? live(data.accounts).filter((x) => accountKind(x) === 'savings') : live(data.accounts);
+          return <Row first={f} label={label} value={a ? `★ ${a.name}` : k === 'saveTo' ? 'The matching jar' : 'Last one used'} onPress={() => choose(label, [['none', k === 'saveTo' ? 'The matching jar' : 'Last one used'], ...pool.map((x) => [x.id, x.name])], id || 'none', (v) => set('typeDefaults', { [k]: v === 'none' ? null : v }))} />;
+        },
+      })),
+      { key: 'deftip', words: 'default hold star', node: (f) => <T size={12} color={th.faint} style={{ paddingVertical: 10, borderTopWidth: f ? 0 : 1, borderTopColor: th.line }}>Or hold an account on the Add screen to make it the ★ default.</T> },
+    ],
     money: [
+      { key: 'travel', words: 'travel mode trip abroad currency bdt taka', node: (f) => <Row first={f} label="✈️ Travel mode" sub={data.travel && data.travel.on ? `New records start in ${data.travel.currency}` : 'New records start in another currency while you travel'} right={<Toggle value={!!(data.travel && data.travel.on)} onChange={(v) => set('travel', { on: v })} label="Travel mode" />} /> },
+      data.travel && data.travel.on ? { key: 'travelCur', words: 'travel currency', node: (f) => <Row first={f} label="Travel currency" value={`${data.travel.currency} · ${currencyName(data.travel.currency)}`} onPress={() => nav.openSheet('currency', { title: 'Travel currency', value: data.travel.currency, onPick: (c) => c && set('travel', { currency: c }) })} /> } : null,
+      { key: 'nextup', words: 'next up home days upcoming bills window', node: (f) => <Row first={f} label="Next up on Home" sub="The 3 soonest, each bill once" value={NEXT_DAYS.find((x) => x[0] === Number(data.nextUpDays || 7)) ? NEXT_DAYS.find((x) => x[0] === Number(data.nextUpDays || 7))[1] : `${data.nextUpDays} days`} onPress={() => choose('Next up looks ahead', [...NEXT_DAYS, ['other', 'Another number…']], NEXT_DAYS.some((x) => x[0] === Number(data.nextUpDays || 7)) ? Number(data.nextUpDays || 7) : 'other', (v) => {
+        if (v !== 'other') { update({ nextUpDays: v }); return; }
+        setTimeout(() => nav.openSheet('text', { title: 'Days ahead', number: true, value: String(data.nextUpDays || 7), placeholder: '10', onPick: (t) => { const n = Math.round(parseAmount(t)); if (n >= 1 && n <= 90) update({ nextUpDays: n }); } }), 250);
+      })} /> },
       { key: 'home', words: 'home currency nzd', node: (f) => <Row first={f} label="Home currency" value={`${data.homeCurrency} · ${currencyName(data.homeCurrency)}`} onPress={changeHome} /> },
       { key: 'second', words: 'second currency bdt taka', node: (f) => <Row first={f} label="Second currency" sub="A small ≈ line in another currency" right={<Toggle value={!!data.secondOn} onChange={(v) => update({ secondOn: v, secondCurrency: data.secondCurrency && data.secondCurrency !== data.homeCurrency ? data.secondCurrency : data.homeCurrency === 'BDT' ? 'USD' : 'BDT' })} label="Second currency" />} /> },
       data.secondOn ? { key: 'secondCur', words: 'second currency bdt taka', node: (f) => <Row first={f} label="Currency" value={`${data.secondCurrency} · ${currencyName(data.secondCurrency)}`} onPress={() => nav.openSheet('currency', { title: 'Second currency', value: data.secondCurrency, onPick: (c) => c && update({ secondCurrency: c }) })} /> } : null,
@@ -202,6 +221,8 @@ export default function Settings({ section }) {
     })) : [],
     reminders: [
       { key: 'on', words: 'reminders notifications', node: (f) => <Row first={f} label="Reminders" right={<Toggle value={data.reminders.on !== false} onChange={toggleReminders} label="Reminders" />} /> },
+      data.reminders.on !== false ? { key: 'low', words: 'low balance warning below zero overdrawn', node: (f) => <Row first={f} label="Low balance warning" sub={`${(data.lowWarn || {}).days || 3} days before your bank looks like going below 0`} right={<Toggle value={!data.lowWarn || data.lowWarn.on !== false} onChange={(v) => set('lowWarn', { on: v })} label="Low balance warning" />} /> } : null,
+      data.reminders.on !== false ? { key: 'evening', words: 'evening 9pm log today nothing added reminder', node: (f) => <Row first={f} label="Log today?" sub="At 9pm, only on days you've added nothing" right={<Toggle value={!data.evening || data.evening.on !== false} onChange={(v) => set('evening', { on: v })} label="Log today reminder" />} /> } : null,
       data.reminders.on !== false ? { key: 'days', words: 'bill reminder days before due', node: (f) => <Row first={f} label="Bills, ahead of time" value={(BILL_DAYS.find((x) => x[0] === Number(data.reminders.billDays)) || BILL_DAYS[2])[1]} onPress={() => choose('Remind me about bills', BILL_DAYS, Number(data.reminders.billDays), (v) => set('reminders', { billDays: v }))} /> } : null,
       data.reminders.on !== false ? { key: 'time', words: 'reminder time morning', node: (f) => <Row first={f} label="At" value={timeLabel(data.reminders.time || '09:00')} onPress={() => choose('Reminder time', TIMES.map((t) => [t, timeLabel(t)]), data.reminders.time, (v) => set('reminders', { time: v }))} /> } : null,
       data.reminders.on !== false ? { key: 'rep', words: 'repeats confirm pending', node: (f) => <Row first={f} label="Did you pay it?" sub="On the day something Upcoming is due" right={<Toggle value={data.reminders.repeats !== false} onChange={(v) => set('reminders', { repeats: v })} label="Did you pay it?" />} /> } : null,
@@ -292,7 +313,7 @@ export default function Settings({ section }) {
   };
   const searching = !!q.trim();
   const sections = [
-    ['account', 'Account'], ['money', 'Money'], ['secondPlaces', `Show ${data.secondCurrency || 'it'} on`], ['reminders', 'Reminders'],
+    ['account', 'Account'], ['defaults', 'Defaults'], ['money', 'Money'], ['secondPlaces', `Show ${data.secondCurrency || 'it'} on`], ['reminders', 'Reminders'],
     ['look', 'Look'], ['data', 'Data'], ...(adv || searching ? [['advanced', 'Advanced']] : []), ['about', 'About'],
   ].filter(([k]) => !only || k === only);
 

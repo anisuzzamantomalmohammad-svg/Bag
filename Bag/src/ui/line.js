@@ -14,6 +14,70 @@ const AnimatedPath = Animated.createAnimatedComponent(Path);
 // details: show the figures on the line. onTap: a tap without dragging.
 // gold: day by day savings [{ date, v }], drawn as a smooth gold curve on
 // its own scale along the bottom (only when there's something saved).
+// The figures on the line: where you started, where you'll end (and the
+// this-period-only end), the gold Saved. Each stays inside the chart, clear
+// of the others, today's dot and the 🏠 pins.
+function placeLabels({ g, w, H, line, period, endXY, money, th, details }) {
+  const out = [];
+  const minY = 11;
+  const maxY = H - g.bot - 3;
+  const clamp = (y) => Math.max(minY, Math.min(maxY, y));
+  const width = (t) => t.length * 6.3;
+  if (g.pastXY.length) {
+    const sy = g.y(line.start);
+    out.push({ key: 'start', x: g.pastXY[0][0] + 8, anchor: 'start', y: sy - 8 < minY ? sy + 16 : sy - 8, text: money(line.start), color: th.warn });
+  }
+  const right = [];
+  // Little left after today (end of the month): the end figures go left of
+  // today's dot instead of piling up at the edge.
+  const rx = endXY[0] - g.lastXY[0] < 70 && g.lastXY[0] > 120 ? g.lastXY[0] - 14 : w - 4;
+  if (line.fut.length > 1) {
+    const near = Math.abs(endXY[0] - g.lastXY[0]) < 70 && Math.abs(endXY[1] - g.lastXY[1]) < 22;
+    right.push({ key: 'end', x: rx, anchor: 'end', y: rx < w - 4 ? endXY[1] - 12 : near ? endXY[1] + 20 : endXY[1] - 10, text: money(line.end), color: line.end < 0 ? th.out : th.muted });
+  }
+  if (period && g.f2XY.length) {
+    const e2 = g.f2XY[g.f2XY.length - 1];
+    const v2 = line.fut[line.fut.length - 1].v - line.start;
+    right.push({ key: 'end2', x: rx, anchor: 'end', y: e2[1] + 16, text: `${v2 >= 0 ? '+' : ''}${money(v2)}`, color: th.lineP || '#B79CF0' });
+  }
+  if (g.goldD && details) right.push({ key: 'gold', x: g.goldEnd.x - 8, anchor: 'end', y: g.goldEnd.y - 8, text: `Saved ${money(g.goldEnd.v)}`, color: th.gold || '#F5C35B' });
+  // Pins and today's dot are things to keep clear of.
+  const avoid = [{ x: g.lastXY[0], y: g.lastXY[1], r: 9 }];
+  g.pins.forEach((q) => avoid.push({ x: q.x, y: q.y, r: 12 }));
+  const box = (l) => {
+    const wd = width(l.text);
+    const x0 = l.anchor === 'end' ? l.x - wd : l.anchor === 'middle' ? l.x - wd / 2 : l.x;
+    return { x0, x1: x0 + wd, y0: l.y - 10, y1: l.y + 3 };
+  };
+  const hits = (l) => avoid.some((a) => { const b = box(l); return a.x + a.r > b.x0 && a.x - a.r < b.x1 && a.y + a.r > b.y0 && a.y - a.r < b.y1; });
+  const all = [...out, ...right];
+  all.forEach((l) => {
+    l.y = clamp(l.y);
+    // Off a pin or the dot: try below, then above.
+    if (hits(l)) {
+      const a = avoid.find((v) => { const b = box(l); return v.x + v.r > b.x0 && v.x - v.r < b.x1 && v.y + v.r > b.y0 && v.y - v.r < b.y1; });
+      const down = clamp(a.y + a.r + 12);
+      const up = clamp(a.y - a.r - 3);
+      l.y = !hits({ ...l, y: down }) ? down : up;
+    }
+  });
+  // No two figures on top of each other.
+  const sorted = all.slice().sort((p, q) => p.y - q.y);
+  for (let i = 1; i < sorted.length; i += 1) {
+    const p = box(sorted[i - 1]);
+    const q = box(sorted[i]);
+    const overlapX = p.x0 < q.x1 && q.x0 < p.x1;
+    if (overlapX && sorted[i].y - sorted[i - 1].y < 13) sorted[i].y = sorted[i - 1].y + 13;
+  }
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    if (sorted[i].y > maxY) {
+      sorted[i].y = maxY;
+      for (let k = i - 1; k >= 0; k -= 1) if (sorted[k + 1].y - sorted[k].y < 13 && box(sorted[k]).x0 < box(sorted[k + 1]).x1 && box(sorted[k + 1]).x0 < box(sorted[k]).x1) sorted[k].y = sorted[k + 1].y - 13;
+    }
+  }
+  return all;
+}
+
 export default function BalanceLine({ line, ticks = [], onScrub, money, motion = true, period = false, details = false, onTap, height, gold = null }) {
   const H = height || 180;
   const th = useTheme();
@@ -65,7 +129,21 @@ export default function BalanceLine({ line, ticks = [], onScrub, money, motion =
       goldD = d;
       goldEnd = { x: P[P.length - 1][0], y: P[P.length - 1][1], v: gold[gold.length - 1].v, area: `${d} L${P[P.length - 1][0].toFixed(1)} ${H - bot} L${P[0][0].toFixed(1)} ${H - bot} Z` };
     }
-    return { padL, padR, top, bot, y, xOf, pastXY, futXY, p2XY, f2XY, path, len: Math.max(1, len), lastXY, area, lo, targets, span, goldD, goldEnd };
+    // 🏠 pins sit on the line; two close together stack instead of covering each other.
+    const pins = [];
+    line.fut.forEach((p, i) => {
+      if (!p.pin) return;
+      let px = futXY[i][0];
+      let py = futXY[i][1];
+      const near = pins.filter((q) => Math.abs(q.x - px) < 20 && Math.abs(q.y - py) < 22);
+      if (near.length) {
+        py = Math.max(...near.map((q) => q.y)) + 22;
+        if (py > H - bot - 10) py = Math.min(...near.map((q) => q.y)) - 22;
+      }
+      px = Math.min(w - 11, Math.max(11, px));
+      pins.push({ x: px, y: Math.max(top - 6, Math.min(H - bot - 10, py)), pin: p.pin, color: p.color, key: `pin${i}` });
+    });
+    return { padL, padR, top, bot, y, xOf, pastXY, futXY, p2XY, f2XY, path, len: Math.max(1, len), lastXY, area, lo, targets, span, goldD, goldEnd, pins };
   }, [w, line, period, H, gold]);
 
   useEffect(() => {
@@ -127,7 +205,6 @@ export default function BalanceLine({ line, ticks = [], onScrub, money, motion =
           {g.goldD ? <Path d={g.goldEnd.area} fill="url(#gg)" /> : null}
           {g.goldD ? <Path d={g.goldD} stroke={th.gold || '#F5C35B'} strokeWidth={2.3} fill="none" strokeLinecap="round" /> : null}
           {g.goldD ? <Circle cx={g.goldEnd.x} cy={g.goldEnd.y} r={4} fill={th.gold || '#F5C35B'} stroke={th.dotRing} strokeWidth={2} /> : null}
-          {g.goldD && details ? <SvgText x={g.goldEnd.x - 8} y={g.goldEnd.y - 8} fontSize={11} fontFamily={F.semi} textAnchor="end" fill={th.gold || '#F5C35B'}>{`🫙 ${money(g.goldEnd.v)}`}</SvgText> : null}
           {g.pastXY.length > 1 ? (
             <AnimatedPath d={g.path(g.pastXY)} stroke="url(#lg)" strokeWidth={2.6} fill="none" strokeLinecap="round" strokeLinejoin="round"
               strokeDasharray={`${g.len} ${g.len}`} strokeDashoffset={draw.interpolate({ inputRange: [0, 1], outputRange: [g.len, 0] })} />
@@ -137,26 +214,18 @@ export default function BalanceLine({ line, ticks = [], onScrub, money, motion =
           {period && g.p2XY.length ? <Circle cx={g.p2XY[g.p2XY.length - 1][0]} cy={g.p2XY[g.p2XY.length - 1][1]} r={4} fill={th.lineP || '#B79CF0'} /> : null}
           <Path d={g.path(g.futXY)} stroke={futColor} strokeWidth={2.2} fill="none" strokeLinecap="round" strokeDasharray="2 6" />
           {line.fut.length > 1 ? <Circle cx={endXY[0]} cy={endXY[1]} r={4} fill={futColor} /> : null}
-          {details && line.fut.length > 1 ? (() => {
-            // Keep the end figure clear of today's dot.
-            const near = Math.abs(endXY[0] - g.lastXY[0]) < 70 && Math.abs(endXY[1] - g.lastXY[1]) < 22;
-            return <SvgText x={w - 4} y={near ? endXY[1] + 20 : endXY[1] - 10} fontSize={11} fontFamily={F.semi} textAnchor="end" fill={endV < 0 ? th.out : th.muted}>{money(endV)}</SvgText>;
-          })() : null}
-          {details && period && g.f2XY.length ? (() => {
-            const e2 = g.f2XY[g.f2XY.length - 1];
-            const v2 = line.fut[line.fut.length - 1].v - line.start;
-            return <SvgText x={w - 4} y={e2[1] + 16} fontSize={11} fontFamily={F.semi} textAnchor="end" fill={th.lineP || '#B79CF0'}>{v2 >= 0 ? '+' : ''}{money(v2)}</SvgText>;
-          })() : null}
           {g.pastXY.length ? <Circle cx={g.pastXY[0][0]} cy={g.y(line.start)} r={4} fill={th.warn} /> : null}
-          {details && g.pastXY.length ? <SvgText x={g.pastXY[0][0] + 7} y={g.y(line.start) - 8} fontSize={11} fontFamily={F.semi} fill={th.warn}>{money(line.start)}</SvgText> : null}
-          {line.fut.map((p, i) => (p.pin ? (
-            <G key={`pin${i}`}>
-              <Circle cx={g.futXY[i][0]} cy={g.futXY[i][1] + 16} r={11} fill={th.pinBg} stroke={p.color || th.warn} strokeWidth={1.2} />
-              <SvgText x={g.futXY[i][0]} y={g.futXY[i][1] + 20} fontSize={11} textAnchor="middle">{p.pin}</SvgText>
+          {g.pins.map((q) => (
+            <G key={q.key}>
+              <Circle cx={q.x} cy={q.y} r={10} fill={th.pinBg} stroke={q.color || th.warn} strokeWidth={1.2} />
+              <SvgText x={q.x} y={q.y + 4} fontSize={10.5} textAnchor="middle">{q.pin}</SvgText>
             </G>
-          ) : null))}
+          ))}
+          {placeLabels({ g, w, H, line, period, endXY, money, th, details }).map((l) => (
+            <SvgText key={l.key} x={l.x} y={l.y} fontSize={11} fontFamily={F.semi} textAnchor={l.anchor} fill={l.color}>{l.text}</SvgText>
+          ))}
           <Circle cx={g.lastXY[0]} cy={g.lastXY[1]} r={5} fill={th.dot} stroke={th.dotRing} strokeWidth={3} />
-          {ticks.map(([date, label]) => {
+          {ticks.filter(([date, label], i, arr) => label === 'Today' || !arr.some(([d2, l2]) => l2 === 'Today' && Math.abs(g.xOf({ date: d2 }) - g.xOf({ date })) < 44)).map(([date, label]) => {
             const x = g.xOf({ date });
             return <SvgText key={date + label} x={x} y={H - 6} fontSize={10} fontFamily={F.regular} textAnchor={x < 40 ? 'start' : x > w - 40 ? 'end' : 'middle'} fill={label === 'Today' ? th.chipOn : th.faint}>{label}</SvgText>;
           })}

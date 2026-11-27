@@ -1,44 +1,41 @@
 // 2.2's sheets: checking an account (wallet count, bank app), pinning a
 // category or person to Home, the exchange rate, and which bank or jar.
 import React, { useMemo, useState } from 'react';
-import { TextInput, View } from 'react-native';
+import { ScrollView, TextInput, View } from 'react-native';
 import { useApp } from '../state/store';
 import { Bubble, Button, F, Icon, Row, Seg, T, Toggle, useTheme, Press as Pressable } from '../ui/kit';
 import { accountEmoji, alpha, catColor } from '../lib/look';
-import { accountBalance, live } from '../lib/ledger';
+import { accountBalance, leftOf, live } from '../lib/ledger';
+import { Calendar } from '../ui/calendar';
+import { addDays, fmtShort, today } from '../lib/dates';
 import { expectedFor, groupOf, sortAccounts } from '../lib/plan';
 import { latestRate, savedRate } from '../lib/rates';
-import { fmt, parseAmount, round2 } from '../lib/money';
+import { cleanNum, fmt, parseAmount, round2 } from '../lib/money';
 import { feel } from '../lib/feel';
 import { LOOKS } from '../ui/looks';
 
-const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'];
+// The phone's own number keyboard.
 
-// Always has a decimal point. A bank that's overdrawn gets a separate
-// minus switch next to the number instead of losing the point.
-function Pad({ onKey }) {
+export function AmountInput({ value, onChange, placeholder = '0', size = 44, autoFocus = true, label = 'Amount', prefix }) {
   const th = useTheme();
-  const keys = KEYS;
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-      {keys.map((k) => (
-        <Pressable key={k} onPress={() => onKey(k)} accessibilityRole="button" accessibilityLabel={k === 'del' ? 'Delete' : k}
-          style={({ pressed }) => ({ width: '31.8%', height: 46, borderRadius: 14, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
-          {k === 'del' ? <Icon name="delete" size={20} color={th.ink} /> : <T size={20}>{k}</T>}
-        </Pressable>
-      ))}
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+      {prefix ? <T serif size={size} style={{ lineHeight: size * 1.22 }}>{prefix}</T> : null}
+      <TextInput
+        value={value}
+        onChangeText={(t) => onChange(cleanNum(t))}
+        autoFocus={autoFocus}
+        keyboardType="decimal-pad"
+        inputMode="decimal"
+        placeholder={placeholder}
+        placeholderTextColor={th.faint2}
+        selectionColor={th.accent}
+        accessibilityLabel={label}
+        style={{ fontFamily: F.serif, fontSize: size, color: th.ink, textAlign: 'center', minWidth: 120, paddingVertical: 0, outlineStyle: 'none' }}
+      />
     </View>
   );
 }
-
-const typeKey = (v, k) => {
-  if (k === 'del') return v.slice(0, -1);
-  if (k === '−') return v.startsWith('-') ? v.slice(1) : `-${v}`;
-  if (k === '.' && v.includes('.')) return v;
-  if (v.includes('.') && v.split('.')[1].length >= 2) return v;
-  if (v.replace(/[-.]/g, '').length >= 10) return v;
-  return v === '0' && k !== '.' ? k : v + k;
-};
 
 /* ------------------------------ Check an account ------------------------------ */
 
@@ -90,9 +87,9 @@ export function CheckSheet({ p, done }) {
     <View style={{ gap: 10 }}>
       <T size={13.5} color={th.muted} center>Bag thinks <T size={13.5} weight="semi">{money(expected, { currency: acc.currency })}</T>{p.jarNote ? ` (with ${p.jarNote})` : ''}</T>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-        <T serif size={44} center style={{ lineHeight: 54 }}>{v === '' || v === '-' ? <T serif size={44} color={th.faint2}>{v === '-' ? '−0' : '0'}</T> : v.replace('-', '−')}</T>
+        <AmountInput value={v.replace('-', '')} onChange={(t) => setV((x) => (x.startsWith('-') ? '-' : '') + t)} prefix={v.startsWith('-') ? '−' : null} label={cash ? 'What you have' : 'What the app says'} />
         {minusOk ? (
-          <Pressable onPress={() => setV(typeKey(v, '−'))} accessibilityRole="button" accessibilityLabel={v.startsWith('-') ? 'Make it positive' : 'Make it negative (overdrawn)'} hitSlop={8}
+          <Pressable onPress={() => setV(v.startsWith('-') ? v.slice(1) : `-${v}`)} accessibilityRole="button" accessibilityLabel={v.startsWith('-') ? 'Make it positive' : 'Make it negative (overdrawn)'} hitSlop={8}
             style={{ height: 32, paddingHorizontal: 10, borderRadius: 10, backgroundColor: v.startsWith('-') ? alpha(th.out, 0.18) : th.soft, justifyContent: 'center' }}>
             <T size={14} weight="semi" color={v.startsWith('-') ? th.out : th.muted}>{v.startsWith('-') ? '− overdrawn' : '+/−'}</T>
           </Pressable>
@@ -115,7 +112,7 @@ export function CheckSheet({ p, done }) {
                   <Pressable onPress={() => setParts(parts.filter((_, k) => k !== i))} hitSlop={8} accessibilityLabel="Remove"><Icon name="x" size={15} color={th.faint} /></Pressable>
                 </View>
               ))}
-              <Inp value={cur.amount} onChangeText={(t) => setCur({ ...cur, amount: t.replace(/[^0-9.]/g, '') })} placeholder={`Amount (blank = all ${fmt(Math.max(0, round2(Math.abs(gap) - parts.reduce((t, x) => t + Number(x.amount), 0))))})`} keyboardType="decimal-pad" />
+              <Inp value={cur.amount} onChangeText={(t) => setCur({ ...cur, amount: cleanNum(t) })} placeholder={`Amount (blank = all ${fmt(Math.max(0, round2(Math.abs(gap) - parts.reduce((t, x) => t + Number(x.amount), 0))))})`} keyboardType="decimal-pad" />
               <Inp value={cur.name} onChangeText={(t) => setCur({ ...cur, name: t })} placeholder={cash ? 'Untracked cash' : 'Untracked'} />
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                 {cats.map((c) => (
@@ -133,7 +130,6 @@ export function CheckSheet({ p, done }) {
           ) : null}
         </View>
       ) : real !== null ? <T size={13.5} color={th.in} weight="semi" center>✓ Spot on</T> : null}
-      <Pad onKey={(k) => setV((x) => typeKey(x, k))} />
       <Button label={real === null ? (cash ? 'Type what you have' : 'Type what it says') : gap === 0 ? "Yes, that's right" : 'Confirm and record'} onPress={save} disabled={real === null} />
     </View>
   );
@@ -290,7 +286,137 @@ export function LooksSheet() {
   );
 }
 
+/* ------------------------------ Pay some back ------------------------------ */
+
+// Any amount, from any account (or split across a few), any day. Each part
+// is a Cash out from that account; the debt goes down by what it's worth.
+export function PayDebtSheet({ p, done }) {
+  const app = useApp();
+  const th = useTheme();
+  const { data } = app;
+  const r = data.records[p.id];
+  const home = data.homeCurrency;
+  const accs = sortAccounts ? sortAccounts(live(data.accounts)) : live(data.accounts);
+  const now = today();
+  const [amount, setAmount] = useState('');
+  const [split, setSplit] = useState(false);
+  const [accountId, setAccountId] = useState(() => (accs.find((a) => a.currency === home) || accs[0] || {}).id || null);
+  const [parts, setParts] = useState({});
+  const [date, setDate] = useState(now);
+  const [cal, setCal] = useState(false);
+  const [month, setMonth] = useState(now.slice(0, 7));
+  const acc = data.accounts[accountId];
+  const [currency, setCurrency] = useState(acc ? acc.currency : home);
+  if (!r || r.deleted) return <T color={th.faint}>This one's gone.</T>;
+  const owe = r.type === 'iowe';
+  const left = leftOf(r);
+  const curs = [...new Set([currency, home, r.currency].filter(Boolean))];
+  const rateTo = (cur) => (cur === home ? 1 : savedRate(date, cur, home) || latestRate(cur, home) || 0);
+  const debtRate = r.currency === home ? 1 : Number(r.rate) || rateTo(r.currency) || 1;
+  const worth = (n, cur) => (cur === r.currency ? n : round2((n * rateTo(cur)) / debtRate));
+  const total = split ? Object.values(parts).reduce((t, v) => t + (parseAmount(v) || 0), 0) : parseAmount(amount) || 0;
+  const off = round2(worth(total, currency));
+  const ok = total > 0 && (split ? Object.values(parts).some((v) => parseAmount(v) > 0) : true);
+  const pay = () => {
+    if (!ok) { feel.warn(); return; }
+    const list = split
+      ? Object.entries(parts).filter(([, v]) => parseAmount(v) > 0).map(([aid, v]) => ({ date, accountId: aid, amount: parseAmount(v), currency }))
+      : [{ date, accountId, amount: total, currency }];
+    app.payDebt(r.id, list);
+    feel.done();
+    done();
+  };
+  const chip = (on) => ({ height: 40, paddingHorizontal: 12, borderRadius: 13, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: on ? th.soft : 'transparent', borderWidth: 1.5, borderColor: on ? th.chipOn : th.line });
+  const dateChip = (label, on, onPress) => (
+    <Pressable key={label} onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ flex: 1, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? th.chipOn : th.soft }}>
+      <T size={12.5} weight="medium" color={on ? th.chipOnInk : th.muted}>{label}</T>
+    </Pressable>
+  );
+  return (
+    <View style={{ gap: 10 }}>
+      <T size={13} color={th.muted} center>{app.money(left, { currency: r.currency })} left{r.who ? ` · ${r.who}` : ''}</T>
+      {!split ? <AmountInput value={amount} onChange={setAmount} label="Amount to pay" /> : <T serif size={34} center>{fmt(total)}</T>}
+      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
+        {curs.map((c) => (
+          <Pressable key={c} onPress={() => setCurrency(c)} accessibilityRole="button" accessibilityState={{ selected: c === currency }} style={{ height: 28, paddingHorizontal: 10, borderRadius: 999, justifyContent: 'center', backgroundColor: c === currency ? th.soft : 'transparent', borderWidth: 1, borderColor: c === currency ? th.lineStrong : 'transparent' }}>
+            <T size={12} weight="medium" color={c === currency ? th.ink : th.faint}>{c}</T>
+          </Pressable>
+        ))}
+      </View>
+      {total > 0 && currency !== r.currency ? <T size={12.5} color={th.faint} center>≈ {app.money(off, { currency: r.currency })} off the debt</T> : null}
+      {off > left + 0.004 ? <T size={12.5} color={th.warn} center>That's more than what's left</T> : null}
+      <T size={12} color={th.faint}>{owe ? 'From' : 'Into'}</T>
+      <ScrollRow>
+        {accs.map((a) => (
+          <Pressable key={a.id} onPress={() => { feel.pick(); if (split) return; setAccountId(a.id); setCurrency(a.currency); }} accessibilityRole="button" style={chip(!split && a.id === accountId)}>
+            <T size={13.5}>{accountEmoji(a)}</T><T size={13.5}>{a.name}</T>
+          </Pressable>
+        ))}
+        <Pressable onPress={() => { feel.pick(); setSplit(!split); }} accessibilityRole="button" accessibilityState={{ selected: split }} style={[chip(split), split ? null : { borderStyle: 'dashed' }]}>
+          <T size={13.5} color={split ? th.ink : th.muted}>Split</T>
+        </Pressable>
+      </ScrollRow>
+      {split ? (
+        <View style={{ gap: 6 }}>
+          {accs.map((a) => (
+            <View key={a.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <T size={14} style={{ flex: 1 }} numberOfLines={1}>{accountEmoji(a)} {a.name}</T>
+              <TextInput value={parts[a.id] || ''} onChangeText={(t) => setParts({ ...parts, [a.id]: cleanNum(t) })} keyboardType="decimal-pad" inputMode="decimal" placeholder="0" placeholderTextColor={th.faint2} accessibilityLabel={`From ${a.name}`}
+                style={{ width: 120, height: 40, borderRadius: 11, borderWidth: 1, borderColor: th.lineStrong, backgroundColor: th.soft, color: th.ink, paddingHorizontal: 10, textAlign: 'right', fontFamily: F.regular, fontSize: 15 }} />
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {dateChip('Today', date === now && !cal, () => { setDate(now); setCal(false); })}
+        {dateChip('Yesterday', date === addDays(now, -1) && !cal, () => { setDate(addDays(now, -1)); setCal(false); })}
+        {dateChip(cal || ![now, addDays(now, -1)].includes(date) ? fmtShort(date) : 'Pick date', cal || ![now, addDays(now, -1)].includes(date), () => setCal(!cal))}
+      </View>
+      {cal ? <Calendar month={month} onMonth={setMonth} value={date} onPick={(d) => { if (d <= now) { setDate(d); setCal(false); } }} weekStart={data.weekStart === 0 ? 0 : data.weekStart || 1} /> : null}
+      <Button label={ok ? `Pay ${fmt(total)} ${currency}${split ? '' : acc ? ` from ${acc.name}` : ''}` : 'Type an amount'} disabled={!ok} onPress={pay} />
+    </View>
+  );
+}
+
+function ScrollRow({ children }) {
+  return <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 6 }}>{children}</ScrollView>;
+}
+
+/* ------------------------------ Details pop-up ------------------------------ */
+
+// The small pop-up behind anything you tap on Home, Records and Upcoming:
+// a few rows, maybe a note, and a button or two.
+// p: { title, rows: [{ label, value, tone: 'in'|'out'|'gold'|'muted'|'warn', bold, tint, onPress }], note, buttons: [{ label, kind, onPress }] }
+export function InfoSheet({ p, done }) {
+  const th = useTheme();
+  const toneOf = (t) => ({ in: th.in, out: th.out, gold: th.gold, muted: th.muted, warn: th.warn, faint: th.faint }[t] || th.ink);
+  const rows = (p.rows || []).filter(Boolean);
+  return (
+    <View style={{ gap: 4 }}>
+      {p.sub ? <T size={13} color={th.muted} style={{ marginBottom: 4 }}>{p.sub}</T> : null}
+      {rows.map((r, i) => {
+        const inner = (
+          <View style={[{ flexDirection: 'row', alignItems: 'center', minHeight: 40, gap: 10, borderTopWidth: i && !r.tint ? 1 : 0, borderTopColor: th.line }, r.tint ? { backgroundColor: alpha(toneOf(r.tone), 0.12), borderRadius: 10, paddingHorizontal: 8, marginHorizontal: -8 } : null]}>
+            <T size={14} weight={r.bold ? 'semi' : 'regular'} color={r.tint ? toneOf(r.tone) : r.dim ? th.muted : th.ink} style={{ flex: 1 }} numberOfLines={2}>{r.label}</T>
+            {r.value !== undefined && r.value !== null ? <T size={14} weight={r.bold ? 'semi' : 'regular'} color={toneOf(r.tone)}>{r.value}</T> : null}
+            {r.onPress ? <Icon name="chevron-right" size={16} color={th.faint} /> : null}
+          </View>
+        );
+        return r.onPress ? <Pressable key={i} onPress={() => { done(); setTimeout(r.onPress, 220); }} accessibilityRole="button">{inner}</Pressable> : <View key={i}>{inner}</View>;
+      })}
+      {p.note ? <T size={12.5} color={p.noteTone === 'out' ? th.out : th.faint} style={{ marginTop: 6 }}>{p.note}</T> : null}
+      {(p.buttons || []).length ? (
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+          {p.buttons.map((b) => <Button key={b.label} label={b.label} kind={b.kind || 'primary'} style={{ flex: 1 }} onPress={() => { done(); setTimeout(b.onPress, 220); }} />)}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export const KINDS2 = {
+  info: { title: (p) => p.title || '', C: InfoSheet },
+  paydebt: { title: (p, data) => (data.records[p.id] && data.records[p.id].type === 'owed' ? 'Got some back' : 'Pay some back'), C: PayDebtSheet },
   looks: { title: () => 'Background', C: LooksSheet },
   check: { title: (p, data) => { const a = data.accounts[p.accountId]; return a && groupOf(a) === 'cash' ? "What's in your wallet?" : a && a.kind === 'savings' ? `How much is in ${a.name}?` : `What does ${a ? a.name : 'the'} app say?`; }, C: CheckSheet },
   pin: { title: () => 'Pin to Home', C: PinSheet },

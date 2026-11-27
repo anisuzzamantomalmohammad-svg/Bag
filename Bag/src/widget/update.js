@@ -11,8 +11,9 @@ export function refreshWidget() {
     try {
       const { requestWidgetUpdate } = require('react-native-android-widget');
       const { buildWidget } = require('./load');
-      const { WIDGET_NAME, JAR_WIDGET } = require('./BagWidget');
+      const { WIDGET_NAME, JAR_WIDGET, SMALL_WIDGET } = require('./BagWidget');
       await requestWidgetUpdate({ widgetName: WIDGET_NAME, renderWidget: (info) => buildWidget(info, undefined, WIDGET_NAME), widgetNotFound: () => {} });
+      await requestWidgetUpdate({ widgetName: SMALL_WIDGET, renderWidget: (info) => buildWidget(info, undefined, SMALL_WIDGET), widgetNotFound: () => {} });
       await requestWidgetUpdate({ widgetName: JAR_WIDGET, renderWidget: (info) => buildWidget(info, undefined, JAR_WIDGET), widgetNotFound: () => {} });
     } catch (e) {
       // widget library missing (Expo Go) or no widget on the home screen

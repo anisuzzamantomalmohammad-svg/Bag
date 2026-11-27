@@ -9,13 +9,13 @@
 // ({ id, deleted: true }) so it can't come back from the other phone.
 
 export const COLLECTIONS = ['records', 'accounts', 'categories', 'budgets', 'goals', 'repeats'];
-export const WHOLE_FIELDS = ['homeCurrency', 'secondCurrency', 'weekStart', 'monthStartDay', 'budgetRollover', 'margin', 'paydays', 'paydayDone', 'pins', 'defaultAccount', 'showAmounts'];
+export const WHOLE_FIELDS = ['homeCurrency', 'secondCurrency', 'weekStart', 'monthStartDay', 'budgetRollover', 'margin', 'paydays', 'paydayDone', 'pins', 'defaultAccount', 'showAmounts', 'typeDefaults', 'nextUpDays'];
 
 // Settings that stay on one phone (never synced or backed up).
 export const PER_PHONE = [
   'themeMode', 'accent', 'moneyColours', 'textSize', 'lock', 'reminders', 'homeCards', 'defaults', 'numbers', 'swipe',
   'reportsView', 'google', 'lastSyncAt', 'syncStamps', 'dirtyAt', 'lastDriveBackupAt', 'lastAccountId', 'notifAsked', 'tipsSeen',
-  'secondOn', 'secondShow', 'homePeriod', 'photos', 'addMore',
+  'secondOn', 'secondShow', 'homePeriod', 'photos', 'addMore', 'travel', 'lowWarn', 'evening',
   'vibration', 'reduceMotion', 'tilt', 'looks', 'lookNow', 'lookDay', 'paydayLater', 'seenNew', 'widget', 'nudgedWeek', 'checkedOn', 'homeFocus', 'homeAccount',
 ];
 

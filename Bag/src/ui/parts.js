@@ -9,7 +9,7 @@ import { Feather } from '@expo/vector-icons';
 import { useApp } from '../state/store';
 import { Bubble, F, Squish, T, useTheme, Press as Pressable } from './kit';
 import { accountEmoji, alpha, catColor } from '../lib/look';
-import { fmtShort } from '../lib/dates';
+import { fmtShort, today } from '../lib/dates';
 import { displayName, isOpen, isPending, kindOf, rateOf, statusOf } from '../lib/ledger';
 import { useNav } from '../nav';
 
@@ -189,10 +189,35 @@ export function useRecordActions() {
 // A record row: emoji, name, amount. Tap it for the details (category,
 // account, day) and Open; hold it to change it (account, category, day) or
 // select several. In select mode a tap ticks it instead.
+// The pop-up behind a record row: what it was, and Edit / Open.
+export function showRecord(r, app, nav) {
+  if (r.type === 'iowe' || r.type === 'owed') { nav.push('record', { id: r.id }); return; }
+  const { data, money } = app;
+  const now = today();
+  const cat = data.categories[r.categoryId];
+  const acc = data.accounts[r.accountId];
+  const to = data.accounts[r.toAccountId];
+  const inn = r.type === 'income';
+  nav.openSheet('info', {
+    title: `${r.type === 'transfer' ? '⇄' : cat && !cat.deleted ? cat.emoji : '🤝'} ${displayName(r, data)}`,
+    rows: [
+      { label: 'Amount', value: money(r.type === 'expense' ? -r.amount : r.amount, { currency: r.currency, plus: inn }), tone: inn ? 'in' : r.type === 'expense' ? 'out' : null },
+      cat && !cat.deleted && r.type !== 'transfer' ? { label: 'Category', value: cat.name } : null,
+      acc ? { label: r.type === 'transfer' ? 'From' : inn ? 'Into' : 'From', value: `${accountEmoji(acc)} ${acc.name}` } : null,
+      to ? { label: 'To', value: `${accountEmoji(to)} ${to.name}` } : null,
+      { label: 'Date', value: r.date === now ? 'Today' : fmtShort(r.date, { weekday: true }) },
+      (r.tags || []).length ? { label: 'Tags', value: r.tags.map((t) => `#${t}`).join(' '), tone: 'muted' } : null,
+      r.description ? { label: r.description, dim: true } : null,
+    ],
+    buttons: [{ label: 'Edit', kind: 'secondary', onPress: () => nav.push('add', { id: r.id }) }, { label: 'Open', kind: 'secondary', onPress: () => nav.push('record', { id: r.id }) }],
+  });
+}
+
 export function RecordRow({ record, onPress, showDate, first, select, onSelectStart }) {
   const th = useTheme();
   const nav = useNav();
-  const { data, money } = useApp();
+  const app = useApp();
+  const { data, money } = app;
   const [open, setOpen] = useState(false);
   const amt = recordAmount(record);
   // Moves are grey; money going into (or out of) a jar is gold.
@@ -224,7 +249,7 @@ export function RecordRow({ record, onPress, showDate, first, select, onSelectSt
   };
   return (
     <View style={{ borderRadius: 16, backgroundColor: open || on ? th.card : 'transparent', marginHorizontal: -8, paddingHorizontal: 8 }}>
-      <Squish onPress={() => (picking ? select.toggle(record.id) : setOpen(!open))} onLongPress={hold} delayLongPress={350}
+      <Squish onPress={() => (picking ? select.toggle(record.id) : onPress ? showRecord(record, app, nav) : setOpen(!open))} onLongPress={hold} delayLongPress={350}
         accessibilityLabel={`${name}, ${money(amt.value, { currency: record.currency })}. ${picking ? (on ? 'Selected' : 'Not selected') : 'Tap for details, hold to change'}`}
         style={{ minHeight: 50, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 6 }}>
         <View>

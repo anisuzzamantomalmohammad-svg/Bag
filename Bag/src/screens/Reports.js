@@ -7,7 +7,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle, Defs, G, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Defs, G, Line, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 import { useApp } from '../state/store';
@@ -98,6 +98,28 @@ export default function Reports({ nonce, seg: startSeg }) {
   }, [series]);
 
   const cats = useMemo(() => categoryTotals(data, pFrom, pTo, showIncome ? 'income' : 'expense', flows), [pFrom, pTo, flows, showIncome]);
+  // The same stretch before this one, for "▲ 62" on the top cards.
+  const prevPoint = view !== 'cumulative' && idx > 0 ? series[idx - 1] : null;
+  const prevCats = useMemo(() => {
+    if (!prevPoint) return null;
+    const m = {};
+    categoryTotals(data, prevPoint.from, prevPoint.to, showIncome ? 'income' : 'expense', flows).forEach((c) => { m[c.categoryId] = c.total; });
+    return m;
+  }, [prevPoint && prevPoint.from, flows, showIncome]);
+  const catSum = cats.reduce((t, c) => t + c.total, 0) || 1;
+  // Tags on the records in this stretch.
+  const tagList = useMemo(() => {
+    const m = {};
+    flows.forEach((f) => {
+      if (!f.count || (pFrom && f.date < pFrom) || f.date > pTo) return;
+      ((f.record && f.record.tags) || []).forEach((t) => {
+        const x = m[t] || (m[t] = { tag: t, total: 0, ids: new Set() });
+        x.total += f.home;
+        x.ids.add(f.record.id);
+      });
+    });
+    return Object.values(m).map((x) => ({ tag: x.tag, total: round2(x.total), count: x.ids.size })).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  }, [flows, pFrom, pTo]);
 
   const balances = useMemo(() => (view === 'cumulative' ? balanceAtMonthEnds(data, `${(series[0] || { key: now.slice(0, 7) }).key}-01`, now, { flows, homePerUnit: app.homePerUnit }) : []), [view, series, flows]);
 
@@ -156,26 +178,25 @@ export default function Reports({ nonce, seg: startSeg }) {
         {cats.length ? (
           <>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <T size={13} color={th.muted}>{showIncome ? 'Where most of it came from' : 'Where most of it went'}</T>
-              <Pressable onPress={() => nav.push('breakdown', { kind: showIncome ? 'income' : 'expense', from: pFrom, to: pTo, title: view === 'cumulative' ? `Since ${fmtShort(first)}` : point.title })} accessibilityRole="button" hitSlop={8}><T size={13} weight="medium" color={th.chipOn}>See records ›</T></Pressable>
+              <T size={13} color={th.muted}>{showIncome ? 'Top cash in' : 'Top spending'}</T>
+              <Pressable onPress={() => nav.push('breakdown', { kind: showIncome ? 'income' : 'expense', from: pFrom, to: pTo, title: view === 'cumulative' ? `Since ${fmtShort(first)}` : point.title })} accessibilityRole="button" hitSlop={8}><T size={13} weight="medium" color={th.chipOn}>All categories ›</T></Pressable>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 10 }}>
-              {cats.map((c) => {
+              {cats.slice(0, 8).map((c) => {
                 const cat = data.categories[c.categoryId];
                 const col = showIncome && !cat ? th.in : catColor(cat);
+                const pct = Math.round((c.total / catSum) * 100);
+                const before = prevCats ? prevCats[c.categoryId] : undefined;
+                const diff = before === undefined ? null : round2(c.total - before);
+                const prevName = prevPoint ? (view === 'weekly' ? 'last week' : monthLabel(prevPoint.key)) : '';
                 return (
-                  <Squish key={c.categoryId} onPress={() => cat && !cat.deleted && nav.push('category', { id: c.categoryId, from: pFrom, to: pTo })} accessibilityLabel={`${cat ? cat.name : 'No category'}, ${app.money(c.total)}`} style={{ width: 136, height: 150, borderRadius: 24, padding: 14, overflow: 'hidden', justifyContent: 'space-between' }}>
-                    <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
-                      <Defs><LinearGradient id={`tc${c.categoryId}`} x1="0" y1="0" x2="1" y2="1"><Stop offset="0" stopColor={tint(col, 0.45)} /><Stop offset="1" stopColor={col} /></LinearGradient></Defs>
-                      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#tc${c.categoryId})`} />
-                      <Rect x="96" y="104" width="100" height="100" rx="38" fill="#FFFFFF" fillOpacity={0.22} />
-                    </Svg>
-                    <T size={30}>{cat && !cat.deleted ? cat.emoji : '🏷️'}</T>
-                    <View>
-                      <T size={13} color="#0E131A" style={{ opacity: 0.7 }} numberOfLines={1}>{cat && !cat.deleted ? cat.name : 'No category'}</T>
-                      <T serif size={22} color="#0E131A">{app.money(c.total)}</T>
-                      <T size={11.5} color="#0E131A" style={{ opacity: 0.7 }}>{c.count} {c.count === 1 ? 'payment' : 'payments'}</T>
-                    </View>
+                  <Squish key={c.categoryId} onPress={() => cat && !cat.deleted && nav.push('category', { id: c.categoryId, from: pFrom, to: pTo })} accessibilityLabel={`${cat ? cat.name : 'No category'}, ${app.money(c.total)}, ${pct}%`}
+                    style={{ width: 142, borderRadius: 20, padding: 13, gap: 6, backgroundColor: alpha(col, 0.12), borderWidth: 1, borderColor: alpha(col, 0.3) }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: alpha(col, 0.22), alignItems: 'center', justifyContent: 'center' }}><T size={19}>{cat && !cat.deleted ? cat.emoji : '🏷️'}</T></View>
+                    <T size={13} color={th.muted} numberOfLines={1}>{cat && !cat.deleted ? cat.name : 'No category'}</T>
+                    <T serif size={22}>{app.money(c.total, { decimals: 0 })}</T>
+                    <View style={{ height: 4, borderRadius: 2, backgroundColor: alpha(col, 0.18), overflow: 'hidden' }}><View style={{ width: `${pct}%`, height: '100%', backgroundColor: col }} /></View>
+                    <T size={11.5} color={th.faint} numberOfLines={1}>{pct}%{prevCats ? ' · ' : ''}{!prevCats ? '' : diff === null ? 'new' : Math.abs(diff) < 1 ? `same as ${prevName}` : <T size={11.5} color={(diff > 0) !== showIncome ? th.out : th.in}>{diff > 0 ? '▲' : '▼'} {app.money(Math.abs(diff), { decimals: 0 })}</T>}</T>
                   </Squish>
                 );
               })}
@@ -183,28 +204,49 @@ export default function Reports({ nonce, seg: startSeg }) {
           </>
         ) : null}
 
-        <Card pad={0} style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 2 }}>
-          <T size={13} color={th.muted} style={{ marginBottom: 2 }}>{point.title}{point.partial ? ' (so far)' : ''}</T>
-          <Row first minHeight={46} label={startLabel} value={<Amount value={sum.start} kind={sum.start < 0 ? 'out' : 'neutral'} plus={false} />} chevron={false} />
-          {sum.openingIn ? <Row minHeight={46} label="Opening balance" sub="Not cash in" value={<Amount value={sum.openingIn} kind={sum.openingIn < 0 ? 'out' : 'neutral'} plus={false} />} chevron={false} /> : null}
-          <Row minHeight={46} label="Cash in" onPress={() => setShowIncome(true)} value={<Amount value={point.income} kind="in" />} chevron={false} accessibilityLabel="Cash in: show where it came from" />
-          <Row minHeight={46} label="Cash out" onPress={() => setShowIncome(false)} value={<Amount value={-point.expense} kind="out" />} chevron={false} accessibilityLabel="Cash out: show where it went" />
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 40, marginHorizontal: -8, paddingHorizontal: 8, marginVertical: 4, borderRadius: 12, backgroundColor: alpha(net >= 0 ? th.in : th.out, 0.1) }}>
-            <T size={14} weight="semi" color={net >= 0 ? th.in : th.out}>{net >= 0 ? 'Saved' : 'Overspent'} {view === 'weekly' ? 'this week' : view === 'monthly' ? 'this month' : `since ${fmtShort(first)}`}</T>
-            <T size={14} weight="semi" color={net >= 0 ? th.in : th.out}>{app.money(net, { plus: net > 0 })}</T>
+        {tagList.length ? (
+          <>
+            <T size={13} color={th.muted}>Tags</T>
+            <Card pad={0} style={{ paddingHorizontal: 16 }}>
+              {tagList.slice(0, 6).map((x, i) => (
+                <Row key={x.tag} first={i === 0} left={<View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center' }}><T size={15} color={th.muted}>#</T></View>}
+                  label={x.tag} sub={`${x.count} ${x.count === 1 ? 'record' : 'records'}`} value={<Amount value={x.total} kind={x.total < 0 ? 'out' : 'in'} size={14} />} chevron={false}
+                  onPress={() => nav.setTab('Records', { q: `#${x.tag}`, from: pFrom, to: pTo })} />
+              ))}
+            </Card>
+          </>
+        ) : null}
+
+        <Card onPress={() => nav.openSheet('info', {
+          title: `${point.title}${point.partial ? ' (so far)' : ''}`,
+          rows: [
+            { label: startLabel, value: app.money(sum.start) },
+            sum.openingIn ? { label: 'Opening balance (not cash in)', value: app.money(sum.openingIn), tone: 'muted' } : null,
+            { label: 'Cash in', value: app.money(point.income, { plus: true }), tone: 'in' },
+            { label: 'Cash out', value: app.money(-point.expense), tone: 'out' },
+            sum.other ? { label: 'Lent, borrowed, paid back (not counted)', value: app.money(sum.other, { plus: sum.other > 0 }), tone: 'muted' } : null,
+            { label: sum.current ? 'You have now' : `On ${fmtShort(pTo)}`, value: app.money(sum.end), bold: true },
+            sum.ahead ? { label: `Upcoming by ${untilWord}`, value: app.money(sum.ahead.total, { plus: sum.ahead.total > 0 }), tone: 'warn' } : null,
+            sum.ahead ? { label: `You'll have on ${untilWord}`, value: app.money(sum.ahead.after), bold: true } : null,
+            view !== 'cumulative' && totals.n > 1 ? { label: 'Average cash out', value: `${app.money(totals.avgExp)} a ${view === 'weekly' ? 'week' : 'month'}`, tone: 'muted' } : null,
+            secNet ? { label: `Saved in ${secNet.currency}`, value: `≈ ${fmtApprox(secNet.amount, secNet.currency)}`, tone: 'muted' } : null,
+          ],
+        })} style={{ gap: 6 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <T size={13} color={th.muted}>{view === 'cumulative' ? fmtShort(first) : fmtShort(pFrom)}</T>
+            <T size={14} weight="semi">{app.money(sum.start)}</T>
           </View>
-          {sum.other ? <Row minHeight={46} label="Lent, borrowed, paid back" sub="Not cash in or out" onPress={() => nav.setTab('Records', { type: 'people', from: pFrom, to: pTo })} value={<Amount value={sum.other} kind="neutral" plus />} chevron={false} /> : null}
-          <Row minHeight={46} label={<T weight="semi">{sum.current ? 'You have now' : `On ${fmtShort(pTo)}`}</T>} value={<Amount value={sum.end} kind={sum.end < 0 ? 'out' : 'neutral'} plus={false} />} chevron={false} onPress={() => nav.push('accounts')} />
-          {sum.ahead ? (
-            <>
-              <Row minHeight={46} label={<T color={th.warn}>Upcoming by {untilWord}</T>} value={<Amount value={sum.ahead.total} kind={sum.ahead.total < 0 ? 'out' : sum.ahead.total > 0 ? 'in' : 'neutral'} plus />} chevron={false} onPress={() => nav.setTab('Upcoming')} />
-              <Row minHeight={46} label={<T weight="semi">You'll have on {untilWord}</T>} value={<Amount value={sum.ahead.after} kind={sum.ahead.after < 0 ? 'out' : 'neutral'} plus={false} />} chevron={false} />
-            </>
-          ) : null}
-          {secNet ? <T size={12} color={th.faint} style={{ marginBottom: 8 }}>Saved ≈ {fmtApprox(secNet.amount, secNet.currency)}</T> : null}
-          {view !== 'cumulative' && totals.n > 1 ? (
-            <T size={13} color={th.faint} style={{ marginBottom: 10 }}>Average cash out: {app.money(totals.avgExp)} a {view === 'weekly' ? 'week' : 'month'} over {totals.n} full {view === 'weekly' ? 'weeks' : 'months'}</T>
-          ) : null}
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 14 }}>
+            <T size={13} color={th.in}>{app.money(point.income, { plus: true })} in</T>
+            <T size={13} color={th.out}>{app.money(-point.expense)} out</T>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <T size={13} color={th.muted}>{sum.current ? 'Now' : fmtShort(pTo)}</T>
+            <T size={14} weight="semi">{app.money(sum.end)}</T>
+          </View>
+          <View style={{ alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: alpha(net >= 0 ? th.in : th.out, 0.12), marginTop: 2 }}>
+            <T size={12.5} weight="semi" color={net >= 0 ? th.in : th.out}>{net >= 0 ? 'Saved' : 'Overspent'} {app.money(net, { plus: net > 0 })}</T>
+          </View>
         </Card>
 
         {view === 'cumulative' && balances.length ? (
@@ -371,7 +413,7 @@ function Donut({ slices, label, money, onOpen }) {
           </Svg>
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
             <T size={10} color={th.faint} numberOfLines={1} style={{ maxWidth: 90 }}>{s ? `${s.emoji} ${s.name.replace(/ \(.*\)/, '')}`.toUpperCase() : label}</T>
-            <T serif size={18}>{money(s ? s.total : total)}</T>
+            <T serif size={18}>{money(s ? s.total : total, { decimals: 0 })}</T>
             {s ? <T size={10} color={th.faint}>{Math.round((s.total / total) * 100)}%</T> : null}
           </View>
         </View>

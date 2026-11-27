@@ -34,6 +34,12 @@ export const homeOf = (r) => round2((Number(r.amount) || 0) * rateOf(r));
 
 export const defaultKind = (type) => (type === 'iowe' ? 'bill' : type === 'owed' ? 'lent' : null);
 export const kindOf = (r) => r.kind || defaultKind(r.type);
+// Debts paid back in parts. r.payments = [{ id, date, accountId, amount,
+// currency, rate, debtAmount }]: amount/currency is what left (or came into)
+// the account, debtAmount is how much of the debt it cleared.
+export const paymentsOf = (r) => (r && Array.isArray(r.payments) ? r.payments.filter((p) => p && !p.deleted) : []);
+export const paidOf = (r) => round2(paymentsOf(r).reduce((s, p) => s + (Number(p.debtAmount) || 0), 0));
+export const leftOf = (r) => (r.status === 'settled' ? 0 : Math.max(0, round2((Number(r.amount) || 0) - paidOf(r))));
 export const isOpen = (r) => (r.type === 'iowe' || r.type === 'owed') && r.status !== 'settled' && !r.deleted && r.status !== 'skipped';
 // Upcoming: not paid yet, so it counts for nothing until you mark it paid.
 export const isPending = (r) => (r.status === 'pending' || r.status === 'scheduled') && !r.deleted && isMoneyType(r.type);
@@ -90,20 +96,27 @@ export function flowsOf(r) {
         { ...base, date: r.date, accountId: r.toAccountId, native: known ? Number(r.toAmount) : amt, home, currency: known ? r.toCurrency || r.currency : r.currency, count: null },
       ];
     }
-    case 'iowe': {
-      const settled = r.status === 'settled';
-      if (kindOf(r) === 'borrowed') {
-        const out = [flow(r.date, r.accountId, 1, null)];
-        if (settled) out.push(flow(r.settledDate || r.date, settleAcc, -1, null));
-        return out;
-      }
-      return settled ? [flow(r.settledDate || r.date, settleAcc, -1, 'expense')] : [];
-    }
+    case 'iowe':
     case 'owed': {
-      const settled = r.status === 'settled';
-      if (kindOf(r) === 'work') return settled ? [flow(r.settledDate || r.date, settleAcc, 1, 'income')] : [];
-      const out = [flow(r.date, r.accountId, -1, null)];
-      if (settled) out.push(flow(r.settledDate || r.date, settleAcc, 1, null));
+      const sign = r.type === 'iowe' ? 1 : -1;
+      const k = kindOf(r);
+      // A bill I owe is spending when paid; payment for work is income when it
+      // comes in. Borrowed or lent money only moves between you and them.
+      const count = k === 'bill' ? 'expense' : k === 'work' ? 'income' : null;
+      const out = [];
+      // No account = "just keep track": nothing moves when it's added.
+      if ((k === 'borrowed' || k === 'lent') && r.accountId) out.push(flow(r.date, r.accountId, sign, null));
+      paymentsOf(r).forEach((p) => {
+        if (!p.accountId) return;
+        const n = Number(p.amount) || 0;
+        const pr = p.rate === null ? 0 : Number(p.rate) || 1;
+        out.push({ ...base, date: p.date, accountId: p.accountId, currency: p.currency || r.currency, native: -sign * n, home: -sign * round2(n * pr), count, payment: p });
+      });
+      // Marked settled in one go: whatever was still left moves then.
+      const rest = round2(amt - paidOf(r));
+      if (r.status === 'settled' && rest > 0.004 && settleAcc) {
+        out.push({ ...base, date: r.settledDate || r.date, accountId: settleAcc, native: -sign * rest, home: -sign * round2(rest * rateOf(r)), count });
+      }
       return out;
     }
     default:
@@ -162,8 +175,9 @@ export function openDebts(data) {
   let iOwe = 0;
   liveRecords(data).forEach((r) => {
     if (!isOpen(r)) return;
-    if (r.type === 'owed') owedToMe += homeOf(r);
-    else iOwe += homeOf(r);
+    const left = round2(leftOf(r) * rateOf(r));
+    if (r.type === 'owed') owedToMe += left;
+    else iOwe += left;
   });
   return { owedToMe: round2(owedToMe), iOwe: round2(iOwe) };
 }
@@ -208,12 +222,12 @@ export function filterRecords(data, { from, to, type = 'all', categoryId, accoun
       if (type === 'people') { if (r.type !== 'iowe' && r.type !== 'owed') return false; } else if (type === 'upcoming') { if (!isPending(r)) return false; } else if (type !== 'all' && r.type !== type) return false;
       if (!transfers && r.type === 'transfer') return false;
       if (categoryId && r.categoryId !== categoryId) return false;
-      if (accountId && r.accountId !== accountId && r.toAccountId !== accountId && r.settledAccountId !== accountId) return false;
-      if (want && !want.has(r.accountId) && !want.has(r.toAccountId) && !want.has(r.settledAccountId)) return false;
+      if (accountId && r.accountId !== accountId && r.toAccountId !== accountId && r.settledAccountId !== accountId && !paymentsOf(r).some((p) => p.accountId === accountId)) return false;
+      if (want && !want.has(r.accountId) && !want.has(r.toAccountId) && !want.has(r.settledAccountId) && !paymentsOf(r).some((p) => want.has(p.accountId))) return false;
       if (!inRange(effectiveDate(r), from, to)) return false;
       if (query) {
         const cat = cats[r.categoryId];
-        const hay = `${r.name || ''} ${r.description || ''} ${r.who || ''} ${cat ? cat.name : ''} ${r.amount}`.toLowerCase();
+        const hay = `${r.name || ''} ${r.description || ''} ${r.who || ''} ${cat ? cat.name : ''} ${r.amount} ${(r.tags || []).map((t) => `#${t}`).join(' ')}`.toLowerCase();
         if (!hay.includes(query)) return false;
       }
       return true;

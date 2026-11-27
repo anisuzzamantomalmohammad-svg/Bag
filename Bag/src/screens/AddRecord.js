@@ -10,54 +10,32 @@ import { Bubble, Button, Card, Chip, Chips, F, Field, Icon, Row, Screen, Seg, Sq
 import { accountColor, accountEmoji, alpha, catColor } from '../lib/look';
 import { accountBalance, descriptionSuggestions, displayName, findDuplicate, isPending, splitNameAmount, live, nameSuggestions, peopleSuggestions } from '../lib/ledger';
 import { fmtShort, today } from '../lib/dates';
-import { fmt, parseAmount, round2 } from '../lib/money';
+import { cleanAmount, fmt, parseAmount, round2 } from '../lib/money';
 import { describe, presetRule } from '../lib/repeats';
 import { savedRate } from '../lib/rates';
 import { pickPhoto } from '../lib/photos';
-import { keyAt } from '../lib/keypad';
 import { defaultIn, homeGroups } from '../lib/plan';
-import { feel } from '../lib/feel';
 
 const TYPES = [['expense', 'Out'], ['income', 'In'], ['transfer', 'Move'], ['people', 'People']];
 const PEOPLE_COLOR = '#B79CF0';
-const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'];
 
-function Key({ k, onPress, th }) {
-  return (
-    <Squish onPress={() => onPress(k)} accessibilityLabel={k === 'del' ? 'Delete' : k === '.' ? 'Point' : k} style={{ height: 50, borderRadius: 18, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center' }}>
-      {k === 'del' ? <Icon name="delete" size={20} color={th.ink} /> : <T size={22}>{k}</T>}
-    </Squish>
-  );
-}
-
-// A blinking bar where the next digit goes.
-function Caret({ color }) {
-  const a = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    const loop = Animated.loop(Animated.sequence([Animated.timing(a, { toValue: 0, duration: 450, delay: 300, useNativeDriver: Platform.OS !== 'web' }), Animated.timing(a, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' })]));
-    loop.start();
-    return () => loop.stop();
-  }, []);
-  return <Animated.View style={{ width: 2.5, height: 44, borderRadius: 2, marginHorizontal: 1, backgroundColor: color, opacity: a }} />;
-}
-
-function AccButton({ a, label, on, onPress, app, th, flex = 1, more }) {
+function AccButton({ a, label, on, onPress, onLongPress, star, app, th, flex = 1, more }) {
   const bal = a ? accountBalance(app.data, a, { flows: app.flows, homePerUnit: app.homePerUnit }) : null;
   const col = a ? accountColor(a) : th.faint;
   return (
-    <Squish onPress={onPress} accessibilityLabel={`${label ? `${label} ` : ''}${a ? a.name : 'Choose account'}`} style={{ flex, minHeight: 52, borderRadius: 16, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: on ? alpha(col, 0.16) : th.soft, borderWidth: 1.5, borderColor: on ? col : 'transparent' }}>
+    <Squish onPress={onPress} onLongPress={onLongPress} accessibilityLabel={`${label ? `${label} ` : ''}${a ? a.name : 'Choose account'}${star ? ', default' : ''}`} style={{ flex, minHeight: 52, borderRadius: 16, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: on ? alpha(col, 0.16) : th.soft, borderWidth: 1.5, borderColor: on ? col : 'transparent' }}>
       <T size={18}>{a ? accountEmoji(a) : '＋'}</T>
       <View style={{ flex: 1 }}>
-        <T size={13.5} weight="medium" numberOfLines={1}>{label ? `${label} ` : ''}{a ? a.name : 'Choose'}{more ? ' ▾' : ''}</T>
+        <T size={13.5} weight="medium" numberOfLines={1}>{label ? `${label} ` : ''}{a ? a.name : 'Choose'}{star ? <T size={13} color={th.gold}> ★</T> : null}{more ? ' ▾' : ''}</T>
         {bal ? <T size={11.5} color={bal.native < 0 ? th.out : th.faint}>{app.money(bal.native, { currency: a.currency })}</T> : null}
       </View>
     </Squish>
   );
 }
-const PEOPLE = [{ id: 'owed', label: 'I lent' }, { id: 'iowe', label: 'I borrowed' }];
+const PEOPLE = [{ id: 'iowe', label: 'I owe' }, { id: 'owed', label: 'Owed to me' }];
 const PEOPLE_HINT = {
-  owed: 'Not cash out, and getting it back is not cash in',
-  iowe: 'Not cash in, and paying it back is not cash out',
+  owed: 'Lent or split. Not cash out, and getting it back is not cash in',
+  iowe: 'Borrowed. Not cash in, and paying it back is not cash out',
 };
 
 function presetOf(rep) {
@@ -78,24 +56,44 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
   const oldRep = old && old.repeatId ? data.repeats[old.repeatId] : null;
   const accounts = live(data.accounts);
   const lastOk = data.defaults.account === 'last' && data.lastAccountId && data.accounts[data.lastAccountId] && !data.accounts[data.lastAccountId].deleted;
-  const defAcc = (lastOk ? data.lastAccountId : defaultIn(data, 'bank') || defaultIn(data, 'cash') || (accounts[0] && accounts[0].id)) || null;
+  const fallbackAcc = (lastOk ? data.lastAccountId : defaultIn(data, 'bank') || defaultIn(data, 'cash') || (accounts[0] && accounts[0].id)) || null;
+  // Your ★ default for each kind of record (Settings › Defaults, or hold an account here).
+  const okAcc = (aid) => (aid && data.accounts[aid] && !data.accounts[aid].deleted ? aid : null);
+  const typeDefault = (t, side = 'from') => {
+    const d = data.typeDefaults || {};
+    if (t === 'transfer') return okAcc(side === 'to' ? d.moveTo : d.moveFrom);
+    if (t === 'income') return okAcc(d.income);
+    if (t === 'expense') return okAcc(d.expense);
+    return null;
+  };
+  const startT = startType || data.defaults.type || 'expense';
+  const defAcc = typeDefault(startT) || fallbackAcc;
+  // Travel mode: every new record starts in the travel currency.
+  const travelCur = data.travel && data.travel.on && data.travel.currency ? data.travel.currency : null;
   const init = old || {
-    type: startType || data.defaults.type || 'expense', date: today(), accountId: defAcc,
-    currency: (defAcc && data.accounts[defAcc] && data.accounts[defAcc].currency) || home, ...(prefill || {}),
+    type: startT, date: today(), accountId: startT === 'iowe' || startT === 'owed' ? null : defAcc,
+    toAccountId: startT === 'transfer' ? typeDefault('transfer', 'to') : undefined,
+    currency: travelCur || (defAcc && data.accounts[defAcc] && data.accounts[defAcc].currency) || home, ...(prefill || {}),
   };
 
   const [type, setType] = useState(init.type);
   const [amount, setAmount] = useState(init.amount ? String(init.amount) : '');
-  // Where the next digit goes. null = at the end.
-  const [caret, setCaret] = useState(null);
-  const at = caret == null ? amount.length : Math.min(caret, amount.length);
+  const amountRef = useRef(null);
   const [currency, setCurrency] = useState(init.currency || home);
   const [name, setName] = useState(init.name || '');
   const [categoryId, setCategoryId] = useState(init.categoryId || null);
   const [date, setDate] = useState(init.date || today());
-  const [dueDate, setDueDate] = useState(init.dueDate || init.date || today());
-  const [accountId, setAccountId] = useState(init.accountId || defAcc);
-  const [toAccountId, setToAccountId] = useState(init.toAccountId || null);
+  const [dueDate, setDueDate] = useState(old ? old.dueDate || null : init.dueDate || null);
+  const [accountId, setAccountId] = useState(old ? old.accountId || null : init.accountId === undefined ? defAcc : init.accountId);
+  const [tags, setTags] = useState(old && old.tags ? old.tags.map((t) => `#${t}`).join(' ') : '');
+  const [toAccountId, setToAccountId] = useState(() => {
+    if (init.toAccountId) return init.toAccountId;
+    if (old || init.type !== 'transfer') return null;
+    // A Move with no ★ To: the first other account (cash from a bank, a bank from cash).
+    const from = init.accountId === undefined ? defAcc : init.accountId;
+    const other = accounts.find((x) => x.id !== from && !x.deleted && x.kind !== 'savings') || accounts.find((x) => x.id !== from);
+    return other ? other.id : null;
+  });
   const [toAmount, setToAmount] = useState(init.toAmount ? String(init.toAmount) : '');
   const [who, setWho] = useState(init.who || '');
   const [description, setDescription] = useState(init.description || '');
@@ -114,7 +112,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
   const [hintAmount, setHintAmount] = useState('');
   // Repeats, split, description and receipt sit behind "More options". Open
   // when this record already uses one, or when you used them last time.
-  const [more, setMore] = useState(old ? !!(old.repeatId || old.description || ((data.photos || {})[old.id] || []).length) : !!data.addMore || !!repeatPreset);
+  const [more, setMore] = useState(old ? !!(old.repeatId || old.description || (old.tags || []).length || ((data.photos || {})[old.id] || []).length) : !!data.addMore || !!repeatPreset);
   // Receipt photos: the ones already saved, new ones, and ones to remove.
   const [photos, setPhotos] = useState(old ? (data.photos || {})[old.id] || [] : []);
   const savedPhotos = old ? (data.photos || {})[old.id] || [] : [];
@@ -124,7 +122,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
   const touch = (fn) => (v) => { dirty.current = true; setErrors({}); fn(v); };
 
   const isDebt = type === 'iowe' || type === 'owed';
-  const kind = type === 'iowe' ? 'borrowed' : 'lent';
+  const kind = old && old.type === type && old.kind ? old.kind : type === 'iowe' ? 'borrowed' : 'lent';
   const isMoney = !isDebt;
   const future = date > today();
   const willWait = isMoney && (future || notPaid);
@@ -151,7 +149,6 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
     dirty.current = true;
     setErrors({});
     setAmount(offer.amount);
-    setCaret(null);
     if (offer.name) setName(offer.name);
     setHintAmount('');
   };
@@ -179,12 +176,23 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
   const changeType = (t) => {
     dirty.current = true;
     setErrors({});
-    const next = t === 'people' ? (isDebt ? type : 'owed') : t;
+    const next = t === 'people' ? (isDebt ? type : 'iowe') : t;
     setType(next);
     setSplit(false);
     // Bank and Cash: a move goes from the one you picked to the other one.
-    if (next === 'transfer' && !toAccountId) { const other = accounts.find((x) => x.id !== accountId); if (other) setToAccountId(other.id); }
-    if (next !== 'transfer' && !accountId) setAccountId(toAccountId || defAcc);
+    if (next === 'transfer') {
+      const f = typeDefault('transfer', 'from');
+      const to = typeDefault('transfer', 'to');
+      if (f) setAccountId(f); else if (!accountId) setAccountId(fallbackAcc);
+      if (to && to !== (f || accountId)) setToAccountId(to);
+      else if (!toAccountId) { const other = accounts.find((x) => x.id !== (f || accountId)); if (other) setToAccountId(other.id); }
+    } else if (next === 'iowe' || next === 'owed' || next === 'people') {
+      // A debt doesn't have to touch an account: "No, just keep track".
+      if (!old) setAccountId(null);
+    } else {
+      const d = typeDefault(next);
+      if (d) setAccountId(d); else if (!accountId) setAccountId(toAccountId || fallbackAcc);
+    }
     if (cat && cat.kind !== (next === 'income' ? 'income' : 'expense')) setCategoryId(null);
   };
 
@@ -195,7 +203,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
     return { ...base, ...(oldRep ? { confirm: oldRep.confirm, amountMode: oldRep.amountMode, end: oldRep.end } : {}), ...presetRule(preset, isDebt ? dueDate : date) };
   };
 
-  const save = (confirmed) => {
+  const save = (confirmed, again) => {
     const e = {};
     const amtUse = amt;
     const nameUse = name;
@@ -204,7 +212,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
       if (!accountId || !toAccountId) e.account = 'Pick both accounts';
       else if (accountId === toAccountId) e.account = 'Pick two different accounts';
     } else if (!categoryId && !isDebt) e.category = 'Pick a category';
-    if (!accountId && type !== 'transfer') e.account = 'Add an account first';
+    if (!accountId && type !== 'transfer' && !isDebt) e.account = 'Add an account first';
     if (isDebt && !who.trim()) e.who = type === 'owed' ? 'Who did you lend it to?' : 'Who did you borrow from?';
     if (split && !(share > 0 && share < amtUse)) e.split = 'Their share has to be less than the total';
     if (split && !splitWho.trim()) e.split = 'Who are you splitting with?';
@@ -220,6 +228,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
       who: isDebt ? who.trim() : '', dueDate: isDebt ? dueDate : null, description: description.trim(),
       rateManual: foreign && !!rateText, rate: foreign ? rate || null : 1,
       upcoming: isMoney ? willWait : undefined,
+      tags: tags.split(/[\s,]+/).map((t) => t.replace(/^#/, '').trim().toLowerCase()).filter(Boolean),
     };
     const dup = !old && (type === 'expense' || type === 'income') ? findDuplicate(data, draft) : null;
     if (dup && !confirmed) {
@@ -227,7 +236,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
         title: 'Already added?',
         text: `${displayName(dup, data)} for ${app.money(dup.amount, { currency: dup.currency })} is already in ${fmtShort(dup.date, { weekday: true })}.`,
         options: [{ id: 'add', label: 'Add it again', emoji: '＋', sub: 'It really happened twice' }, { id: 'no', label: "Don't add it", emoji: '✕' }],
-        onPick: (k) => { if (k === 'add') setTimeout(() => save(true), 260); else { dirty.current = false; setTimeout(() => nav.pop(), 260); } },
+        onPick: (k) => { if (k === 'add') setTimeout(() => save(true, again), 260); else { dirty.current = false; setTimeout(() => nav.pop(), 260); } },
       });
       return;
     }
@@ -237,7 +246,14 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
       photos.filter((u) => !savedPhotos.includes(u)).forEach((u) => app.addPhoto(savedId, u));
       savedPhotos.filter((u) => !photos.includes(u)).forEach((u) => app.removePhoto(savedId, u));
     }
-    app.showToast(willWait ? `In Upcoming. Not counted until it's paid.` : old ? 'Saved' : type === 'expense' && split ? `Saved. ${splitWho.trim()} owes you ${app.money(share)}` : 'Saved');
+    app.showToast(willWait ? `In Upcoming. Not counted until it's paid.` : old ? 'Saved' : type === 'expense' && split ? `Saved. ${splitWho.trim()} owes you ${app.money(share)}` : again ? 'Saved. Next one' : 'Saved');
+    if (again && !old) {
+      // Save + next: clear the form, keep the type, account and date.
+      dirty.current = false;
+      setAmount(''); setName(''); setCategoryId(null); setDescription(''); setWho(''); setSplit(false); setPhotos([]); setTags(''); setHintAmount('');
+      setTimeout(() => amountRef.current && amountRef.current.focus(), 50);
+      return;
+    }
     nav.pop();
   };
 
@@ -251,18 +267,8 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
 
   const kindColor = type === 'income' ? th.in : type === 'transfer' ? th.chipOn : isDebt ? PEOPLE_COLOR : th.out;
   const onColor = th.mode === 'dark' ? '#0E131A' : '#FFFFFF';
-  const bump = useRef(new Animated.Value(1)).current;
   const shake = useRef(new Animated.Value(0)).current;
   const motion = !data.reduceMotion;
-  const press = (k) => {
-    dirty.current = true;
-    setErrors({});
-    const out = keyAt(amount, caret, k);
-    setAmount(out.v);
-    setCaret(out.c);
-    feel.tap();
-    if (motion) { bump.setValue(1.08); Animated.spring(bump, { toValue: 1, friction: 4, useNativeDriver: Platform.OS !== 'web' }).start(); }
-  };
   useEffect(() => {
     if (!errors.amount || !motion) return;
     shake.setValue(0);
@@ -270,7 +276,6 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
   }, [errors.amount]);
   // Your usual places, one tap away before you type a name.
   const usual = useMemo(() => (type === 'transfer' || isDebt || name ? [] : nameSuggestions(data, '', type).slice(0, 3)), [type, name]);
-  const live2 = accounts.slice().sort((x, y) => (x.order || 0) - (y.order || 0));
   // Where it's paid from: one button per group (all your banks share one),
   // each savings jar on its own. With more than one bank, tapping Bank
   // again asks which, with your default (★) already picked.
@@ -282,6 +287,14 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
     });
     return out;
   }, [data.accounts]);
+  const starFor = (aid, side = 'from') => !!aid && typeDefault(type, side) === aid;
+  const setDefault = (aid, side = 'from') => {
+    if (!aid || isDebt || !data.accounts[aid]) return;
+    const d = { ...(data.typeDefaults || {}) };
+    if (type === 'transfer') d[side === 'to' ? 'moveTo' : 'moveFrom'] = aid; else d[type === 'income' ? 'income' : 'expense'] = aid;
+    app.update({ typeDefaults: d });
+    app.showToast(`★ ${data.accounts[aid].name} is your default for ${type === 'transfer' ? (side === 'to' ? 'Move to' : 'Move from') : type === 'income' ? 'In' : 'Out'}`);
+  };
   const pickAcc = (aid) => { dirty.current = true; setErrors({}); setAccountId(aid); if (data.accounts[aid] && data.accounts[aid].currency && !old) setCurrency(data.accounts[aid].currency); };
   const pressPlace = (pl, cur, setter = pickAcc) => {
     const inIt = pl.accounts.some((a) => a.id === cur);
@@ -302,47 +315,33 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
       title={old ? 'Edit record' : 'New record'}
       back="close"
       onBack={close}
-      footer={<Button label={willWait && !(old && isPending(old)) ? 'Save as Upcoming' : 'Save'} onPress={() => save(false)} />}
-    >
-      <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center' }}>
-        {TYPES.map(([t, l]) => {
-          const on = t === 'people' ? isDebt : type === t;
-          return (
-            <Squish key={t} onPress={() => changeType(t)} accessibilityRole="tab" accessibilityLabel={l} style={{ height: 36, paddingHorizontal: 16, borderRadius: 12, justifyContent: 'center', backgroundColor: on ? kindColor : th.soft, transform: [{ scale: on ? 1.05 : 1 }] }}>
-              <T size={13.5} weight={on ? 'semi' : 'medium'} color={on ? onColor : th.muted}>{l}</T>
-            </Squish>
-          );
-        })}
-      </View>
-
-      {isDebt ? (
-        <View>
-          <Seg items={PEOPLE} value={type} onChange={touch(setType)} />
-          <T size={13} color={th.faint} center style={{ marginTop: 8 }}>{PEOPLE_HINT[type]}</T>
+      footer={old ? <Button label={willWait && !isPending(old) ? 'Save as Upcoming' : 'Save'} onPress={() => save(false)} /> : (
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Button kind="secondary" label="Save + next" onPress={() => save(false, true)} style={{ flex: 1 }} />
+          <Button label={willWait ? 'Save as Upcoming' : 'Save'} onPress={() => save(false)} style={{ flex: 1.3 }} />
         </View>
-      ) : null}
-
+      )}
+    >
       <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 2 }}>
         <Svg width={260} height={170} style={{ position: 'absolute', top: -14 }} pointerEvents="none">
           <Defs><RadialGradient id="glow" cx="50%" cy="50%" r="50%"><Stop offset="0" stopColor={kindColor} stopOpacity={0.3} /><Stop offset="1" stopColor={kindColor} stopOpacity={0} /></RadialGradient></Defs>
           <Ellipse cx={130} cy={85} rx={130} ry={85} fill="url(#glow)" />
         </Svg>
-        <Animated.View style={{ transform: [{ scale: bump }, { translateX: shake }] }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Pressable onPress={() => setCaret(Math.max(0, at - 1))} accessibilityRole="button" accessibilityLabel="Cursor left" hitSlop={6} style={{ width: 32, height: 32, borderRadius: 11, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: amount ? 1 : 0.35 }}><Icon name="chevron-left" size={16} color={th.muted} /></Pressable>
-            <View accessibilityLabel={`Amount ${amount || 0}`} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 66 }}>
-              {amount ? amount.split('').map((ch, i) => (
-                <React.Fragment key={i}>
-                  {i === at ? <Caret color={kindColor} /> : null}
-                  <Pressable onPress={(e) => { const half = e.nativeEvent.locationX < 14; setCaret(half ? i : i + 1); }} accessibilityLabel={`Digit ${ch}`}>
-                    <T serif size={54} style={{ lineHeight: 64 }}>{ch}</T>
-                  </Pressable>
-                </React.Fragment>
-              )) : <T serif size={54} color={th.faint2} style={{ lineHeight: 64 }}>{offer ? offer.amount : '0'}</T>}
-              {at >= amount.length ? <Caret color={kindColor} /> : null}
-            </View>
-            <Pressable onPress={() => setCaret(Math.min(amount.length, at + 1))} accessibilityRole="button" accessibilityLabel="Cursor right" hitSlop={6} style={{ width: 32, height: 32, borderRadius: 11, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center', opacity: amount ? 1 : 0.35 }}><Icon name="chevron-right" size={16} color={th.muted} /></Pressable>
-          </View>
+        <Animated.View style={{ transform: [{ translateX: shake }] }}>
+          {/* Your phone's own number keyboard. A comma works as the decimal point too. */}
+          <TextInput
+            ref={amountRef}
+            value={amount}
+            onChangeText={(v) => { dirty.current = true; setErrors({}); setAmount(cleanAmount(v)); }}
+            autoFocus={!old}
+            keyboardType="decimal-pad"
+            inputMode="decimal"
+            placeholder={offer ? offer.amount : '0'}
+            placeholderTextColor={th.faint2}
+            selectionColor={kindColor}
+            accessibilityLabel="Amount"
+            style={{ fontFamily: F.serif, fontSize: 54, color: th.ink, textAlign: 'center', minWidth: 160, paddingVertical: 2, outlineStyle: 'none' }}
+          />
         </Animated.View>
         <Pressable onPress={() => nav.openSheet('currency', { onPick: (c) => { dirty.current = true; setCurrency(c); setRateText(''); } })} accessibilityRole="button" accessibilityLabel={`Currency ${currency}`} hitSlop={8} style={{ minHeight: 26, paddingHorizontal: 10, borderRadius: 999, justifyContent: 'center' }}>
           <T size={12} weight="medium" color={th.faint}>{currency} ▾</T>
@@ -362,6 +361,24 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
         ) : null}
         {errors.rate ? <T size={13} color={th.danger}>{errors.rate}</T> : null}
       </View>
+
+      <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center' }}>
+        {TYPES.map(([t, l]) => {
+          const on = t === 'people' ? isDebt : type === t;
+          return (
+            <Squish key={t} onPress={() => changeType(t)} accessibilityRole="tab" accessibilityLabel={l} style={{ height: 36, paddingHorizontal: 16, borderRadius: 12, justifyContent: 'center', backgroundColor: on ? kindColor : th.soft, transform: [{ scale: on ? 1.05 : 1 }] }}>
+              <T size={13.5} weight={on ? 'semi' : 'medium'} color={on ? onColor : th.muted}>{l}</T>
+            </Squish>
+          );
+        })}
+      </View>
+
+      {isDebt ? (
+        <View>
+          <Seg items={PEOPLE} value={type} onChange={touch(setType)} />
+          <T size={13} color={th.faint} center style={{ marginTop: 8 }}>{PEOPLE_HINT[type]}</T>
+        </View>
+      ) : null}
 
       {usual.length ? (
         <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -420,23 +437,31 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
 
       {type === 'transfer' ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <AccButton a={acc} label="From" on={!!acc} app={app} th={th} onPress={() => pickAccount(setAccountId, 'From')} />
+          <AccButton a={acc} label="From" on={!!acc} star={starFor(accountId, 'from')} app={app} th={th} onPress={() => pickAccount(setAccountId, 'From')} onLongPress={() => setDefault(accountId, 'from')} />
           <Squish onPress={swap} accessibilityLabel="Swap From and To" style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: th.soft, alignItems: 'center', justifyContent: 'center' }}><T size={17}>⇄</T></Squish>
-          <AccButton a={toAcc} label="To" on={!!toAcc} app={app} th={th} onPress={() => pickAccount(setToAccountId, 'To')} />
+          <AccButton a={toAcc} label="To" on={!!toAcc} star={starFor(toAccountId, 'to')} app={app} th={th} onPress={() => pickAccount(setToAccountId, 'To')} onLongPress={() => setDefault(toAccountId, 'to')} />
         </View>
       ) : (
         <View style={{ gap: 6 }}>
-          <T size={12} color={th.faint} style={{ marginLeft: 4 }}>{accLabel}</T>
-          {places.length <= 2 ? (
-            <View style={{ flex: 1, flexDirection: 'row', gap: 8 }}>
-              {places.map((pl) => <AccButton key={pl.key} a={placeAcc(pl, accountId)} more={pl.accounts.length > 1} on={pl.accounts.some((a) => a.id === accountId)} app={app} th={th} onPress={() => pressPlace(pl, accountId)} />)}
-              {!places.length ? <AccButton a={null} app={app} th={th} onPress={() => nav.push('account', {})} /> : null}
-            </View>
-          ) : (
-            <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {places.map((pl) => <View key={pl.key} style={{ width: '48%', flexGrow: 1 }}><AccButton a={placeAcc(pl, accountId)} more={pl.accounts.length > 1} on={pl.accounts.some((a) => a.id === accountId)} app={app} th={th} onPress={() => pressPlace(pl, accountId)} /></View>)}
-            </View>
-          )}
+          <T size={12} color={th.faint} style={{ marginLeft: 4 }}>{isDebt ? (type === 'iowe' ? 'Did the money come into an account?' : 'Did the money leave an account?') : accLabel}</T>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
+            {isDebt ? (
+              <Squish onPress={() => { dirty.current = true; setAccountId(null); }} accessibilityRole="radio" accessibilityLabel="No, just keep track" style={{ minHeight: 52, borderRadius: 16, paddingHorizontal: 14, justifyContent: 'center', backgroundColor: !accountId ? alpha(PEOPLE_COLOR, 0.16) : th.soft, borderWidth: 1.5, borderColor: !accountId ? PEOPLE_COLOR : 'transparent' }}>
+                <T size={13.5} weight="medium">No, just keep track</T>
+              </Squish>
+            ) : null}
+            {places.map((pl) => {
+              const shown = placeAcc(pl, accountId);
+              return (
+                <View key={pl.key} style={{ minWidth: 150 }}>
+                  <AccButton a={shown} more={pl.accounts.length > 1} on={pl.accounts.some((x) => x.id === accountId)} star={!isDebt && pl.accounts.some((x) => starFor(x.id))} app={app} th={th} onPress={() => pressPlace(pl, accountId)} onLongPress={() => setDefault(shown.id)} />
+                </View>
+              );
+            })}
+            {!places.length ? <View style={{ minWidth: 150 }}><AccButton a={null} app={app} th={th} onPress={() => nav.push('account', {})} /></View> : null}
+          </ScrollView>
+          {isDebt ? <T size={11.5} color={th.faint} style={{ marginLeft: 4 }}>{accountId ? 'That balance changes today. Pay it back later from any account.' : 'None of your balances change. Pay it back from any account, any time.'}</T>
+            : !old ? <T size={11.5} color={th.faint} style={{ marginLeft: 4 }}>Hold an account to make it your ★ default for {type === 'income' ? 'In' : 'Out'}</T> : null}
         </View>
       )}
       {crossTransfer ? (
@@ -447,13 +472,10 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
       {willWait ? <T size={13} color={th.warn} center>Upcoming: not in your balance yet. {future ? `On ${fmtShort(date, { weekday: true })} Home asks` : 'Home asks'} “{type === 'income' ? 'Did it arrive?' : 'Did you pay it?'}”</T> : null}
       {errors.account || errors.category || errors.who ? <T size={13} color={th.danger} center>{errors.account || errors.category || errors.who}</T> : null}
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {KEYS.map((k) => <View key={k} style={{ width: '31.6%', flexGrow: 1 }}><Key k={k} th={th} onPress={press} /></View>)}
-      </View>
 
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
         <Pressable onPress={() => setMore(!more)} accessibilityRole="button" accessibilityState={{ expanded: more }} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <T size={14} weight="medium" color={th.muted}>{type === 'expense' && !old ? 'Repeat, split, receipt, note' : type === 'transfer' ? 'Repeat, note' : 'Repeat, receipt, note'}</T>
+          <T size={14} weight="medium" color={th.muted} numberOfLines={1} style={{ flex: 1 }}>{tags.trim() ? tags.trim() : 'No tags'} · {preset === 'never' ? 'no repeat' : repeatLabel.toLowerCase()}{description ? ' · note' : ''}{type === 'expense' && !old ? ' · split' : ''}</T>
           <Icon name={more ? 'chevron-up' : 'chevron-down'} size={18} color={th.faint} />
         </Pressable>
         {more ? (
@@ -486,6 +508,7 @@ export default function AddRecord({ id, type: startType, prefill, upcoming: star
 
       {more ? (
       <View>
+        <Field label="Tags" value={tags} onChangeText={touch(setTags)} placeholder="#trip #birthday" autoCapitalize="none" accessibilityLabel="Tags" style={{ marginBottom: 10 }} />
         <Field label="Note" value={description} onChangeText={touch(setDescription)} onFocus={() => setDescFocus(true)} onBlur={() => setTimeout(() => setDescFocus(false), 150)} placeholder="Optional" multiline inputStyle={{ paddingTop: 14, paddingBottom: 14 }} />
         {descs.length ? (
           <Chips style={{ marginTop: 8 }}>

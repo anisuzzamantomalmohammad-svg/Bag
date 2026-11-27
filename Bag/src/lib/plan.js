@@ -4,7 +4,7 @@
 import { round2 } from './money';
 import { accountKind } from './look';
 import { addDays, daysBetween, inRange, parseYmd, today as todayYmd } from './dates';
-import { accountBalance, allFlows, live, upcomingUntil } from './ledger';
+import { accountBalance, allFlows, comingUp, itemRecord, live, rateOf, upcomingUntil } from './ledger';
 
 /* ------------------------------ Groups ------------------------------ */
 
@@ -194,4 +194,136 @@ export function expectedFor(data, accountId, { flows = allFlows(data), homePerUn
     if (inside && j.id !== accountId) v += accountBalance(data, j, { flows, homePerUnit }).native;
   });
   return round2(v);
+}
+
+/* ------------------------------ Looking ahead ------------------------------ */
+
+// The account the warnings and the calendar watch: where the margin sits,
+// else your default bank.
+export function watchedAccount(data) {
+  const m = marginOf(data);
+  const id = (m.on && m.accountId) || defaultIn(data, 'bank') || defaultIn(data, 'cash');
+  const a = id && data.accounts[id];
+  return a && !a.deleted ? a : null;
+}
+
+// Your everyday spending from these accounts, a day: cash out over the last
+// 4 weeks, leaving out repeats and debt payments (those are in the plan).
+export function everydaySpend(data, accountIds, { flows = allFlows(data), now = todayYmd() } = {}) {
+  const from = addDays(now, -28);
+  const want = new Set(accountIds);
+  let t = 0;
+  flows.forEach((f) => {
+    if (f.count !== 'expense' || !want.has(f.accountId) || f.date <= from || f.date > now) return;
+    if (f.payment || (f.record && f.record.repeatId)) return;
+    t += -f.home;
+  });
+  return round2(Math.max(0, t) / 28);
+}
+
+// What a planned thing does to one account (home currency), or 0.
+function effectOn(r, accountId) {
+  const amt = round2((Number(r.amount) || 0) * rateOf(r));
+  if (r.type === 'transfer') return r.accountId === accountId ? -amt : r.toAccountId === accountId ? amt : 0;
+  if (r.accountId !== accountId) return 0;
+  if (r.type === 'income') return amt;
+  if (r.type === 'expense') return -amt;
+  return 0;
+}
+
+// Day by day, the end-of-day balance of one account: today as it is now,
+// then each day's bills, pay and saves, less your everyday spending.
+// { account, everyday, start, days: { ymd: { start, end, items } }, firstNeg }
+export function forecast(data, { account, days = 70, flows = allFlows(data), homePerUnit, now = todayYmd() } = {}) {
+  const acc = account || watchedAccount(data);
+  if (!acc) return null;
+  const start = accountBalance(data, acc, { flows, homePerUnit }).home;
+  const everyday = everydaySpend(data, [acc.id], { flows, now });
+  const until = addDays(now, days);
+  const byDay = {};
+  const push = (d, it) => { (byDay[d] = byDay[d] || []).push(it); };
+  comingUp(data, { days, now, people: false }).forEach((it) => {
+    if (it.date <= now || it.date > until) return;
+    const r = itemRecord(it);
+    const v = effectOn(r, acc.id);
+    if (!v) return;
+    const toJar = r.type === 'transfer' && isJar(data.accounts[r.toAccountId]);
+    const cat = data.categories[r.categoryId];
+    push(it.date, {
+      key: it.key, date: it.date, amount: v, item: it,
+      name: r.name || (cat && cat.name) || (r.type === 'transfer' ? 'Move' : 'Repeat'),
+      emoji: toJar ? '🫙' : r.type === 'transfer' ? '⇄' : cat && !cat.deleted ? cat.emoji : '•',
+      kind: toJar ? 'gold' : v > 0 ? 'in' : 'out', categoryId: r.categoryId,
+    });
+  });
+  // Paydays you told Bag about, unless a repeat already brings the pay in.
+  const p = data.paydays || {};
+  const done = data.paydayDone || {};
+  const payRepeat = live(data.repeats).some((rep) => !rep.paused && rep.template && rep.template.type === 'income' && rep.template.categoryId === 'salary' && rep.template.accountId === acc.id);
+  if (!payRepeat && p.how !== 'varies') {
+    paydaysBetween(data, addDays(now, 1), until).forEach((x) => {
+      const where = x.item.accountId || defaultIn(data, 'bank');
+      if (where !== acc.id || done[x.key] || !(Number(x.item.amount) > 0)) return;
+      push(x.date, { key: x.key, date: x.date, amount: round2(Number(x.item.amount)), name: x.item.name || 'Pay', emoji: '💼', kind: 'in', payday: true });
+    });
+  }
+  const out = { account: acc, everyday, start, days: {}, firstNeg: null };
+  out.days[now] = { start: null, end: round2(start), items: [], today: true };
+  if (start < 0) out.firstNeg = now;
+  let bal = start;
+  for (let d = addDays(now, 1); d <= until; d = addDays(d, 1)) {
+    const items = byDay[d] || [];
+    const s0 = round2(bal);
+    items.forEach((it) => { bal += it.amount; });
+    bal = round2(bal - everyday);
+    out.days[d] = { start: s0, end: bal, items };
+    if (bal < 0 && !out.firstNeg) out.firstNeg = d;
+  }
+  return out;
+}
+
+// The quick add line: "lunch 15 cash", "countdown 24.40", "15,50 coffee bank".
+const QA_WORDS = {
+  lunch: ['eating', 'food', 'dining'], dinner: ['eating', 'food', 'dining'], breakfast: ['eating', 'food'], coffee: ['eating', 'coffee', 'food'], cafe: ['eating', 'coffee', 'food'],
+  countdown: ['groceries', 'grocery'], 'new world': ['groceries'], paknsave: ['groceries'], grocery: ['groceries'], groceries: ['groceries'],
+  bus: ['transport'], snapper: ['transport'], uber: ['transport'], petrol: ['transport', 'fuel'], fuel: ['transport'], train: ['transport'],
+  rent: ['rent', 'housing'], phone: ['phone', 'bills'], power: ['bills', 'power'],
+};
+export function parseQuick(data, text) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const numAt = words.findIndex((w) => /^\d+([.,]\d{1,2})?$/.test(w));
+  const amount = numAt >= 0 ? Number(words[numAt].replace(',', '.')) : null;
+  const rest = words.filter((_, i) => i !== numAt);
+  const accs = live(data.accounts);
+  let accountId = null;
+  const keep = [];
+  rest.forEach((w) => {
+    const l = w.toLowerCase();
+    if (!accountId && (l === 'cash' || l === 'bank')) { accountId = defaultIn(data, l); return; }
+    const byName = accs.find((a) => a.name.toLowerCase() === l);
+    if (!accountId && byName) { accountId = byName.id; return; }
+    keep.push(w);
+  });
+  const name = keep.join(' ');
+  const lname = name.toLowerCase();
+  // A name you've used before wins: same category as last time.
+  let categoryId = null;
+  const last = live(data.records).filter((r) => r.type === 'expense' && (r.name || '').toLowerCase() === lname).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  if (last) categoryId = last.categoryId;
+  if (!categoryId) {
+    const cats = live(data.categories).filter((c) => (c.kind || 'expense') === 'expense');
+    const hit = (key) => cats.find((c) => c.id === key || c.name.toLowerCase().includes(key));
+    const exact = cats.find((c) => c.name.toLowerCase() === lname);
+    if (exact) categoryId = exact.id;
+    else {
+      const key = Object.keys(QA_WORDS).find((k) => lname.includes(k));
+      if (key) { const c = QA_WORDS[key].map(hit).find(Boolean); if (c) categoryId = c.id; }
+    }
+  }
+  if (!accountId) {
+    const d = (data.typeDefaults || {}).expense;
+    accountId = (d && data.accounts[d] && !data.accounts[d].deleted ? d : null) || (last && data.accounts[last.accountId] && !data.accounts[last.accountId].deleted ? last.accountId : null) || defaultIn(data, 'cash') || defaultIn(data, 'bank');
+  }
+  return { amount, name, categoryId, accountId };
 }

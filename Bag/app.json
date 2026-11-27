@@ -3,7 +3,7 @@
     "name": "Bag",
     "slug": "bag",
     "owner": "anisuzzaman_tamal",
-    "version": "2.2.0",
+    "version": "2.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "com.tomal.bag",
-      "versionCode": 8,
+      "versionCode": 10,
       "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -93,6 +93,20 @@
               "targetCellHeight": 2,
               "maxResizeWidth": "600dp",
               "maxResizeHeight": "700dp",
+              "resizeMode": "horizontal|vertical",
+              "widgetCategory": "home_screen",
+              "updatePeriodMillis": 1800000
+            },
+            {
+              "name": "BagSmall",
+              "label": "Bag small",
+              "description": "Balance, what's free to spend, Bank, Cash and savings in a 2 × 1",
+              "minWidth": "110dp",
+              "minHeight": "40dp",
+              "targetCellWidth": 2,
+              "targetCellHeight": 1,
+              "maxResizeWidth": "400dp",
+              "maxResizeHeight": "200dp",
               "resizeMode": "horizontal|vertical",
               "widgetCategory": "home_screen",
               "updatePeriodMillis": 1800000

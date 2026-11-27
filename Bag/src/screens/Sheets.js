@@ -185,6 +185,12 @@ export function rangeLabel(from, to) {
   return from ? `From ${fmtShort(from)}` : `Up to ${fmtShort(to)}`;
 }
 
+// "1 – 30 Nov", "1 Oct – 30 Nov", "From 3 Nov".
+export function shortRange(from, to) {
+  if (from && to && from.slice(0, 7) === to.slice(0, 7)) return `${Number(from.slice(8))} – ${fmtShort(to)}`;
+  return rangeLabel(from, to);
+}
+
 // Dates: quick picks, then Months (tap one month, or two for everything in
 // between) or Days (any date to any date).
 function RangeSheet({ p, done }) {
@@ -211,7 +217,9 @@ function RangeSheet({ p, done }) {
   const lo = ma === null ? null : mb === null ? ma : Math.min(ma, mb);
   const hi = ma === null ? null : mb === null ? ma : Math.max(ma, mb);
   const ymOf = (k) => `${Math.floor(k / 12)}-${String((k % 12) + 1).padStart(2, '0')}`;
-  const monthRange = lo === null ? null : { from: `${ymOf(lo)}-01`, to: lastDayOfMonth(ymOf(hi)) };
+  // Nothing tapped yet: the dates you're on now (or this month).
+  const here = p.from || p.to ? { from: p.from || null, to: p.to || null } : { from: `${now.slice(0, 7)}-01`, to: lastDayOfMonth(now.slice(0, 7)) };
+  const monthRange = lo === null ? here : { from: `${ymOf(lo)}-01`, to: lastDayOfMonth(ymOf(hi)) };
   return (
     <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} style={{ marginHorizontal: -20 }}>
@@ -246,8 +254,8 @@ function RangeSheet({ p, done }) {
               );
             })}
           </View>
-          <T size={13} color={th.muted}>{monthRange ? `${rangeLabel(monthRange.from, monthRange.to)}${hi > lo ? ` · ${hi - lo + 1} months` : '. Tap another month for a range.'}` : 'Tap a month. Tap a second one for everything in between.'}</T>
-          <Button label="Show these" disabled={!monthRange} onPress={() => pick({ ...monthRange, id: 'custom' })} />
+          <T size={13} color={th.muted}>{lo === null ? 'Tap a month, or two for everything in between.' : hi > lo ? `${hi - lo + 1} months` : 'Tap another month for a range.'}</T>
+          <Button label={`Show ${shortRange(monthRange.from, monthRange.to)}`} onPress={() => pick({ ...monthRange, id: 'custom' })} />
         </>
       ) : (
         <>
@@ -262,7 +270,7 @@ function RangeSheet({ p, done }) {
               }} />
           ) : null}
           {from && to ? <T size={13} color={th.muted}>{rangeLabel(from, to)} · {daysBetween(from, to) + 1} days</T> : null}
-          <Button label="Show these dates" disabled={!from && !to} onPress={() => pick({ from, to, id: 'custom' })} />
+          <Button label={from || to ? `Show ${shortRange(from, to)}` : `Show ${shortRange(here.from, here.to)}`} onPress={() => pick(from || to ? { from, to, id: 'custom' } : { ...here, id: 'custom' })} />
         </>
       )}
     </>

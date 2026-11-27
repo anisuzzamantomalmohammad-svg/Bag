@@ -26,7 +26,7 @@ export const DEFAULT_CATEGORIES = [
   { id: 'refunds', name: 'Refunds', emoji: '↩️', kind: 'income', order: 3, color: '#A8C8F0' },
   { id: 'gifts-in', name: 'Gifts received', emoji: '🎀', kind: 'income', order: 4, color: '#F2B8D0' },
   { id: 'other-income', name: 'Other income', emoji: '💰', kind: 'income', order: 5, color: '#C9D3DF' },
-  { id: 'untracked-in', name: 'Untracked', emoji: '❔', kind: 'income', order: 6, color: '#8A93A3' },
+  { id: 'untracked-in', name: 'Untracked (in)', emoji: '❔', kind: 'income', order: 6, color: '#8A93A3' },
 ];
 
 // Colours offered when you make or recolour a category.

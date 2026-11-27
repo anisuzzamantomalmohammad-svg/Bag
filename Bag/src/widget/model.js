@@ -127,7 +127,7 @@ export function widgetModel(data, { now = todayYmd(), view = 'month', homePerUni
   });
 
   // 2.2: Bank, Cash and 🫙 pills, what's free to spend, the gold jar line.
-  const groups = homeGroups(data, { flows, homePerUnit }).filter((g) => !g.single).map((g) => ({ id: g.id, emoji: g.emoji, text: `${g.emoji} ${n(g.home, { decimals: 0 })}`, negative: g.home < 0, link: g.id === 'savings' ? 'bag://savings' : `bag://records?group=${g.id}` }));
+  const groups = homeGroups(data, { flows, homePerUnit }).filter((g) => !g.single).map((g) => ({ id: g.id, emoji: g.emoji, text: `${g.emoji} ${n(g.home, { decimals: 0 })}`, negative: g.home < 0, link: g.id === 'savings' ? 'bag://savings' : `bag://home?focus=group:${g.id}` }));
   const spend = toSpend(data, { flows, homePerUnit });
   let pd = null;
   try { pd = perDay(data, { flows, homePerUnit, now }); } catch (e) { pd = null; }
@@ -307,4 +307,14 @@ export function jarSvg(fill, { gold, track, size = 64 }) {
   const f = Math.max(0, Math.min(1, fill || 0));
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${track}" stroke-width="5"/>`
     + `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${gold}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${(c * f).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 ${size / 2} ${size / 2})"/></svg>`;
+}
+
+// A small gold jar, drawn (Android widgets can't show the 🫙 emoji).
+export function jarIconSvg(color, size = 14) {
+  const w = size;
+  const h = Math.round(size * 1.15);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 23" width="${w}" height="${h}">`
+    + `<rect x="5" y="1" width="10" height="3" rx="1.2" fill="${color}"/>`
+    + `<path d="M6 5 h8 v1.6 c2.4 1 3.6 2.8 3.6 5.4 v6.2 c0 2.2 -1.6 3.8 -3.8 3.8 h-7.6 c-2.2 0 -3.8 -1.6 -3.8 -3.8 v-6.2 c0 -2.6 1.2 -4.4 3.6 -5.4 z" fill="none" stroke="${color}" stroke-width="1.9" stroke-linejoin="round"/>`
+    + `<path d="M4.4 14 h11.2" stroke="${color}" stroke-width="1.4" stroke-opacity="0.6"/></svg>`;
 }

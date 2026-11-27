@@ -8,7 +8,7 @@ import { Bar, Bubble, Button, Card, Screen, T, useTheme, Press as Pressable } fr
 import { catColor } from '../lib/look';
 import { IconButton, RecordRow } from '../ui/parts';
 import { budgetStatus, filterRecords } from '../lib/ledger';
-import { addMonths, fmtShort, lastDayOfMonth, monthLabel, today } from '../lib/dates';
+import { addDays, addMonths, fmtShort, lastDayOfMonth, monthLabel, today } from '../lib/dates';
 import { round2 } from '../lib/money';
 import { rangeLabel } from './Sheets';
 
@@ -59,6 +59,31 @@ export default function CategoryDetail({ id, from: startFrom, to: startTo }) {
           <T size={13} color={th.faint}>{income ? 'Cash in' : 'Cash out'}{avg ? ` · about ${app.money(avg)} a month` : ''}</T>
         </View>
       </View>
+
+      {pick && pick.from ? (() => {
+        // This stretch: its total, its share of all cash out (or in), and the
+        // same stretch before it.
+        const len = Math.max(1, Math.round((Date.parse(pick.to || now) - Date.parse(pick.from)) / 86400000) + 1);
+        const pf = addDays(pick.from, -len);
+        const pt = addDays(pick.from, -1);
+        let mine = 0;
+        let all = 0;
+        let before = 0;
+        flows.forEach((f) => {
+          if (f.count !== (income ? 'income' : 'expense')) return;
+          const v = Math.abs(f.home);
+          if (f.date >= pick.from && f.date <= (pick.to || now)) { all += v; if (f.categoryId === id) mine += v; }
+          if (f.categoryId === id && f.date >= pf && f.date <= pt) before += v;
+        });
+        const diff = round2(mine - before);
+        return (
+          <Card style={{ alignItems: 'center', gap: 2 }}>
+            <T size={12.5} color={th.muted}>{rangeLabel(pick.from, pick.to)}</T>
+            <T serif size={30}>{app.money(mine)}</T>
+            <T size={12.5} color={th.faint}>{all ? Math.round((mine / all) * 100) : 0}% of {income ? 'cash in' : 'cash out'}{before || mine ? <T size={12.5} color={Math.abs(diff) < 1 ? th.faint : (diff > 0) !== income ? th.out : th.in}> · {Math.abs(diff) < 1 ? 'same as before' : `${diff > 0 ? '▲' : '▼'} ${app.money(Math.abs(diff), { decimals: 0 })} on the ${len > 20 ? 'month' : 'stretch'} before`}</T> : null}</T>
+          </Card>
+        );
+      })() : null}
 
       {!income ? (
         <Card>

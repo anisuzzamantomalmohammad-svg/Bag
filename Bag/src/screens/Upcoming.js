@@ -1,26 +1,23 @@
-// Upcoming: everything not paid yet, in one list. Overdue first, then this
-// week, then later, then People (lent and borrowed). At the top: what you'll
-// have at the end of the month once it's all paid. Repeats live here too,
-// and a calendar sits behind the icon at the top.
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+// Upcoming: a calendar on top with your bank's balance at the end of each
+// day (tap a day for the sum behind it), then what's due that month, with
+// anything that needs an answer first. Subscriptions and repeats at the end.
+import React, { useEffect, useMemo, useState } from 'react';
+import { ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
-import { Appear, Backdrop, Count } from '../ui/live';
-import { Amount, Bubble, Card, Chip, DaysRing, Empty, Icon, Row, Squish, T, useTheme, Press as Pressable } from '../ui/kit';
+import { Appear, Backdrop } from '../ui/live';
+import { Amount, Bubble, Button, Card, DaysRing, Empty, Icon, Row, Squish, T, useTheme, Press as Pressable } from '../ui/kit';
 import { TabTint } from '../ui/parts';
-import { Calendar } from '../ui/calendar';
-import { Section, comingRow } from './Home';
-import { accountBalance, comingUp, daysUntil, displayName, isOpen, isPending, itemEffect, itemRecord, live, upcomingUntil, upcomingWords } from '../lib/ledger';
-import { describe, nextDate } from '../lib/repeats';
-import { DAY_NAMES, addDays, fmtDate, fmtShort, lastDayOfMonth, parseYmd, periodOf, today } from '../lib/dates';
-import { accountEmoji, alpha, catColor } from '../lib/look';
+import { Section, comingRow, showComing } from './Home';
+import { comingUp, daysUntil, displayName, dueToAsk, itemEffect, itemRecord, live } from '../lib/ledger';
+import { forecast, isJar, marginOf } from '../lib/plan';
+import { feel } from '../lib/feel';
+import { describe, nextDate, nextDates } from '../lib/repeats';
+import { DAY_NAMES, MONTHS_LONG, addDays, addMonths, fmtShort, lastDayOfMonth, parseYmd, today, ymd } from '../lib/dates';
+import { alpha, catColor } from '../lib/look';
 
-const FILTERS = [['all', 'All'], ['out', 'Cash out'], ['in', 'Cash in'], ['people', 'People'], ['repeats', 'Repeats']];
-
-function Repeats() {
+export function Repeats() {
   const app = useApp();
   const nav = useNav();
   const th = useTheme();
@@ -49,131 +46,108 @@ function Repeats() {
   );
 }
 
-export default function Upcoming({ nonce, filter: startFilter }) {
+export default function Upcoming({ nonce, day: startDay, filter: startFilter }) {
   const app = useApp();
   const nav = useNav();
   const th = useTheme();
   const insets = useSafeAreaInsets();
-  const { data, flows, homePerUnit } = app;
+  const { data, flows, homePerUnit, money } = app;
   const now = today();
-  const [view, setView] = useState('list');
-  const [filter, setFilter] = useState(startFilter || 'all');
-  const [month, setMonth] = useState(now.slice(0, 7));
-  const [day, setDay] = useState(now);
-  useEffect(() => { if (nonce) { setFilter(startFilter || 'all'); setView('list'); } }, [nonce]);
+  const [month, setMonth] = useState((startDay || now).slice(0, 7));
+  const [seeAll, setSeeAll] = useState(startFilter === 'people');
+  const [subsOpen, setSubsOpen] = useState(false);
+  const [repsOpen, setRepsOpen] = useState(false);
+  useEffect(() => { if (nonce) { setMonth((startDay || now).slice(0, 7)); setSeeAll(startFilter === 'people'); } }, [nonce]);
+  const ws = data.weekStart === 0 ? 0 : data.weekStart || 1;
 
-  const balance = useMemo(() => live(data.accounts).reduce((s, a) => s + accountBalance(data, a, { flows, homePerUnit }).home, 0), [data.accounts, flows, homePerUnit]);
-  const monthEnd = periodOf(now, 'month', { monthStart: data.monthStartDay || 1 }).to;
-  const ahead = useMemo(() => upcomingUntil(data, monthEnd, now), [data.records, data.repeats, monthEnd]);
-  const weekEnd = periodOf(now, 'week', { weekStart: data.weekStart === 0 ? 0 : data.weekStart || 1 }).to;
-
-  // Everything for the next 5 weeks, plus People with no due date.
-  const items = useMemo(() => comingUp(data, { days: 35, now }), [data.records, data.repeats]);
-  const shown = items.filter((it) => {
-    if (filter === 'all') return true;
-    if (filter === 'people') return it.kind === 'due' || it.kind === 'owedToMe';
-    const e = itemEffect(it);
-    return filter === 'out' ? e < 0 : filter === 'in' ? e > 0 : true;
-  });
-  const groups = [
-    ['Overdue', shown.filter((it) => (it.kind === 'upcoming' || it.kind === 'repeat') && it.date < now)],
-    ['Today', shown.filter((it) => (it.kind === 'upcoming' || it.kind === 'repeat') && it.date === now)],
-    ['This week', shown.filter((it) => (it.kind === 'upcoming' || it.kind === 'repeat') && it.date > now && it.date <= weekEnd)],
-    ['Later', shown.filter((it) => (it.kind === 'upcoming' || it.kind === 'repeat') && it.date > weekEnd)],
-    ['People', shown.filter((it) => it.kind === 'due' || it.kind === 'owedToMe')],
-  ].filter(([, list]) => list.length);
-
-  const open = (it) => {
-    if (it.record) nav.push('record', { id: it.record.id });
-    else if (it.repeat) nav.push('repeat', { id: it.repeat.id });
+  // Your bank, day by day, to the end of the month you're looking at.
+  const monthEnd = lastDayOfMonth(month);
+  const horizon = Math.max(45, daysUntil(now, monthEnd));
+  const fc = useMemo(() => forecast(data, { flows, homePerUnit, now, days: horizon }), [flows, data.records, data.repeats, data.paydays, data.margin, homePerUnit, horizon]);
+  const warnDays = (data.lowWarn && Number(data.lowWarn.days)) || 3;
+  const margin = marginOf(data);
+  const dayCalc = (d) => {
+    if (!fc) return;
+    const x = fc.days[d];
+    if (!x) return;
+    const nm = fc.account.name;
+    const rows = [];
+    if (x.today) rows.push({ label: "Today, after what you've spent so far", value: money(x.end), bold: true });
+    else {
+      rows.push({ label: `End of ${fmtShort(addDays(d, -1), { weekday: true })}`, value: money(x.start) });
+      x.items.forEach((it) => rows.push({ label: `${it.emoji} ${it.name}`, value: money(it.amount, { plus: it.amount > 0 }), tone: it.kind === 'gold' ? 'gold' : it.amount > 0 ? 'in' : 'out' }));
+      rows.push({ label: 'Everyday spending, your average', value: money(-fc.everyday), tone: 'out' });
+      rows.push({ label: 'End of the day', value: money(x.end), bold: true, tone: x.end < 0 ? 'out' : null });
+    }
+    let note = null;
+    let noteTone = null;
+    if (!x.today && x.end < 0 && fc.firstNeg) {
+      const warnOn = addDays(fc.firstNeg, -warnDays);
+      note = fc.firstNeg <= now ? `Below 0. ${nm} is below 0 already.` : warnOn > now ? `Below 0. Bag warns you on ${fmtShort(warnOn, { weekday: true })}.` : 'Below 0. Bag has warned you.';
+      noteTone = 'out';
+    }
+    const tail = `Everyday spending: your average a day from ${nm} over the last 4 weeks, not counting repeats.${margin.on && margin.accountId === fc.account.id ? ` 🛡 The ${money(margin.amount, { decimals: 0 })} margin is inside ${nm}, so it's counted here.` : ''}`;
+    nav.openSheet('info', { title: `${fmtShort(d, { weekday: true })} · ${nm}`, rows, note: note ? `${note}\n${tail}` : tail, noteTone });
   };
-  // A row: ring with days left, name, amount. Tap for Paid / Skip and the
-  // details; hold to change it.
-  const [openKey, setOpenKey] = useState(null);
-  const rowN = useRef(0);
-  rowN.current = 0;
-  const rowFor = (it) => {
+
+  // The grid for this month.
+  const [y, m] = month.split('-').map(Number);
+  const lead = (new Date(y, m - 1, 1).getDay() - ws + 7) % 7;
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= new Date(y, m, 0).getDate(); d++) cells.push(ymd(new Date(y, m - 1, d)));
+  while (cells.length % 7) cells.push(null);
+  const names = [0, 1, 2, 3, 4, 5, 6].map((i) => DAY_NAMES[(i + ws) % 7][0]);
+  const dotColor = (k) => (k === 'gold' ? th.gold : k === 'in' ? th.in : th.out);
+  const canBack = month > now.slice(0, 7);
+  const canNext = month < addMonths(`${now.slice(0, 7)}-01`, 12).slice(0, 7);
+
+  // The list: this month's (or everything coming up), each bill once a day.
+  const asks = dueToAsk(data, now).filter((r) => (data.askLater || {})[r.id] !== now);
+  const items = useMemo(() => comingUp(data, { days: seeAll ? 120 : Math.max(0, daysUntil(now, monthEnd)), now }), [data.records, data.repeats, seeAll, monthEnd]);
+  const listed = items.filter((it) => {
+    if (it.kind === 'upcoming' && it.date <= now) return false;
+    const d = it.kind === 'due' || it.kind === 'owedToMe' ? itemRecord(it).dueDate : it.date;
+    if (seeAll) return true;
+    return !!d && d.slice(0, 7) === month;
+  });
+  const total = listed.reduce((t, it) => t + itemEffect(it), 0);
+
+  const rowFor = (it, i) => {
     const row = comingRow(it, data);
     const r = itemRecord(it);
     const cat = data.categories[r.categoryId];
-    const due = it.kind === 'due' || it.kind === 'owedToMe' ? r.dueDate : it.date;
+    const debt = it.kind === 'due' || it.kind === 'owedToMe';
+    const due = debt ? r.dueDate : it.date;
     const days = due ? daysUntil(now, due) : null;
-    const toJar = r.type === 'transfer' && data.accounts[r.toAccountId] && data.accounts[r.toAccountId].kind === 'savings';
-    const emoji = toJar ? '🫙' : r.type === 'transfer' ? '🔀' : cat && !cat.deleted ? cat.emoji : it.kind === 'owedToMe' || it.kind === 'due' ? '🤝' : '🏷️';
-    const isOpenRow = openKey === it.key;
-    const rec = it.record;
+    const toJar = r.type === 'transfer' && isJar(data.accounts[r.toAccountId]);
+    const emoji = toJar ? '🫙' : r.type === 'transfer' ? '🔀' : cat && !cat.deleted ? cat.emoji : debt ? '🤝' : '🏷️';
     const acc = data.accounts[r.accountId];
-    const rep = r.repeatId ? data.repeats[r.repeatId] : it.repeat;
-    const tags = [fmtShort(due || it.date, { weekday: true }), rep && !rep.deleted ? `🔁 ${describe(rep)}` : null, acc ? `${accountEmoji(acc)} ${acc.name}` : null, cat && !cat.deleted ? `${cat.emoji} ${cat.name}` : null].filter(Boolean);
-    const hold = () => { if (rec) nav.openSheet('change', { id: rec.id }); else if (it.repeat) nav.push('repeat', { id: it.repeat.id }); };
-    const btn = (label, go, strong) => (
-      <Pressable key={label} onPress={go} accessibilityRole="button" style={{ flex: 1, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: strong ? th.warnBtn : th.soft }}>
-        <T size={13} weight={strong ? 'semi' : 'medium'} color={strong ? th.warnBtnInk : th.muted}>{label}</T>
-      </Pressable>
-    );
-    const acts = [];
-    if (rec && isPending(rec)) {
-      acts.push(btn(rec.type === 'income' ? 'Got it' : toJar ? 'Saved it' : rec.type === 'transfer' ? 'Moved' : 'Paid', () => { setOpenKey(null); app.markPaid(rec.id); }, true));
-      if (rec.repeatId) acts.push(btn('Skip this one', () => { setOpenKey(null); app.skipPending(rec.id); }));
-    }
-    if (rec && isOpen(rec)) acts.push(btn(rec.type === 'iowe' ? 'Paid back' : 'Got it back', () => nav.openSheet('settle', { id: rec.id }), true));
-    acts.push(btn('Open', () => open(it)));
+    const color = toJar ? th.gold : catColor(cat);
     return (
-      <Appear key={it.key} delay={80 + Math.min(rowN.current++, 8) * 50} style={{ borderRadius: 16, marginTop: 6, backgroundColor: isOpenRow ? th.card : alpha(toJar ? th.gold : catColor(cat), 0.06) }}>
-        <Squish onPress={() => setOpenKey(isOpenRow ? null : it.key)} onLongPress={hold} delayLongPress={350} accessibilityLabel={`${row.name}, ${app.money(row.value)}, ${row.sub}. Tap for Paid, hold to change`} style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 9, paddingHorizontal: 10 }}>
-          <Bubble emoji={emoji} color={toJar ? th.gold : catColor(cat)} size={36} />
+      <Appear key={it.key} delay={60 + Math.min(i, 8) * 40}>
+        <Squish onPress={() => showComing(it, app, nav)} onLongPress={() => (it.record ? nav.push('record', { id: it.record.id }) : it.repeat ? nav.push('repeat', { id: it.repeat.id }) : null)} delayLongPress={350}
+          accessibilityLabel={`${row.name}, ${money(row.value)}, ${row.sub}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 9, paddingHorizontal: 10, borderRadius: 16, marginTop: 6, backgroundColor: alpha(color, 0.06) }}>
+          <Bubble emoji={emoji} color={color} size={36} />
           <View style={{ flex: 1 }}>
             <T size={14.5} numberOfLines={1}>{row.name}</T>
-            <T size={11.5} color={row.tone === 'warn' ? th.warn : th.faint} numberOfLines={1}>{days !== null && days < 0 ? `${-days} ${days === -1 ? 'day' : 'days'} late` : fmtShort(due || it.date, { weekday: true })}</T>
+            <T size={11.5} color={th.faint} numberOfLines={1}>{due ? fmtShort(due, { weekday: true }) : 'No date'}{acc ? ` · ${acc.name}` : ''}</T>
           </View>
-          {toJar ? <T size={14} weight="medium" color={th.gold}>{app.money(row.value, { currency: row.currency, plus: true })}</T> : <Amount value={row.value} kind={row.kind} currency={row.currency} size={14} />}
-          {days !== null && days > 0 ? <DaysRing days={days} color={toJar ? th.gold : catColor(cat)} /> : null}
+          {toJar ? <T size={14} weight="medium" color={th.gold}>{money(row.value, { currency: row.currency })}</T> : <Amount value={row.value} kind={row.kind} currency={row.currency} size={14} />}
+          {days !== null && days > 0 ? <DaysRing days={days} color={color} /> : null}
         </Squish>
-        {isOpenRow ? (
-          <View style={{ paddingHorizontal: 10, paddingBottom: 10, gap: 8 }}>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingLeft: 47 }}>
-              {tags.map((t) => <View key={t} style={{ backgroundColor: th.soft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }}><T size={11.5} color={th.muted}>{t}</T></View>)}
-            </View>
-            <View style={{ flexDirection: 'row', gap: 6 }}>{acts}</View>
-          </View>
-        ) : null}
       </Appear>
     );
   };
 
-  // Calendar: each day marked in the colour of what's due.
-  const marks = useMemo(() => {
-    const m = {};
-    const from = `${month}-01`;
-    const to = lastDayOfMonth(month);
-    const all = comingUp(data, { days: Math.max(60, Math.round((Date.parse(to) - Date.parse(now)) / 86400000)), now });
-    all.forEach((it) => {
-      const d = it.kind === 'due' || it.kind === 'owedToMe' ? itemRecord(it).dueDate : it.date;
-      if (!d || d < from || d > to) return;
-      const e = itemEffect(it);
-      const c = e > 0 ? th.in : e < 0 ? catColor(data.categories[itemRecord(it).categoryId]) : th.ink;
-      (m[d] = m[d] || []).includes(c) || m[d].push(c);
-    });
-    return m;
-  }, [data.records, data.repeats, month, th]);
-  const dayItems = useMemo(() => comingUp(data, { days: Math.max(0, Math.round((Date.parse(day) - Date.parse(now)) / 86400000)), now })
-    .filter((it) => (it.kind === 'due' || it.kind === 'owedToMe' ? itemRecord(it).dueDate === day : it.date === day)), [data.records, data.repeats, day]);
-
-  // The strip: the next 3 weeks, a dot on each day something's due.
-  const strip = useMemo(() => {
-    const dots = {};
-    comingUp(data, { days: 21, now, people: false }).forEach((it) => {
-      const d = it.date < now ? now : it.date;
-      if (!dots[d]) dots[d] = catColor(data.categories[itemRecord(it).categoryId]);
-    });
-    return Array.from({ length: 21 }, (_, i) => { const d = addDays(now, i); return { d, dot: dots[d] }; });
-  }, [data.records, data.repeats]);
-  const [stripDay, setStripDay] = useState(null);
-  const [cardOpen, setCardOpen] = useState(false);
-  const stripItems = stripDay ? comingUp(data, { days: Math.max(0, daysUntil(now, stripDay)), now, people: false }).filter((it) => (it.date < now ? now : it.date) === stripDay) : [];
-
-  const after = balance + ahead.total;
-  const toPay = ahead.items.filter((it) => itemEffect(it) < 0);
+  // Subscriptions: repeats in Subscriptions or Phone, and what they cost a year.
+  const subs = useMemo(() => live(data.repeats).filter((rep) => !rep.paused && rep.template && rep.template.type === 'expense' && ['subscriptions', 'phone'].includes(rep.template.categoryId)).map((rep) => {
+    const n = nextDates(rep, now, addDays(now, 364)).length;
+    const t = rep.template;
+    return { rep, t, year: n * (Number(t.amount) || 0) };
+  }).sort((a, b) => b.year - a.year), [data.repeats]);
+  const subsYear = subs.reduce((t, x) => t + x.year, 0);
+  const repCount = live(data.repeats).length;
 
   return (
     <View style={{ flex: 1, backgroundColor: th.bg }}>
@@ -181,91 +155,105 @@ export default function Upcoming({ nonce, filter: startFilter }) {
       <Backdrop />
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 12, paddingTop: insets.top + 10, paddingBottom: 6 }}>
         <T size={28} serif style={{ flex: 1 }}>Upcoming</T>
-        <Squish onPress={() => setView(view === 'calendar' ? 'list' : 'calendar')} accessibilityLabel={view === 'calendar' ? 'Show the list' : 'Show the calendar'} style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: view === 'calendar' ? th.chipOn : th.soft, alignItems: 'center', justifyContent: 'center' }}>
-          <Icon name="calendar" size={18} color={view === 'calendar' ? th.chipOnInk : th.muted} />
-        </Squish>
       </View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 + insets.bottom }}>
-        <View style={{ borderRadius: 24, padding: 16, marginTop: 8, overflow: 'hidden', borderWidth: 1, borderColor: th.roseBorder }}>
-          <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
-            <Defs><LinearGradient id="rose" x1="0" y1="0" x2="1" y2="1"><Stop offset="0" stopColor={th.roseA} /><Stop offset="1" stopColor={th.roseB} /></LinearGradient></Defs>
-            <Rect x="0" y="0" width="100%" height="100%" fill="url(#rose)" />
-          </Svg>
-          <Pressable onPress={() => setCardOpen(!cardOpen)} accessibilityRole="button" accessibilityState={{ expanded: cardOpen }} accessibilityLabel={`By ${fmtShort(monthEnd)} you'll have ${app.money(after)}. Tap for the next 3 weeks`} style={{ alignItems: 'center' }}>
-            <T size={10.5} color={th.muted} style={{ letterSpacing: 1.2 }}>BY {fmtShort(monthEnd).toUpperCase()} YOU'LL HAVE</T>
-            <Count size={36} serif color={after < 0 ? th.out : th.ink} style={{ lineHeight: 44 }} value={after} fmt={(v) => app.money(v)} />
-            {cardOpen ? <T size={12.5} color={th.muted} center>{app.money(balance)} now{ahead.count ? `, after ${upcomingWords(ahead, data, app.money)}` : ', nothing else due this month'}</T>
-              : <T size={11} color={th.faint}>Tap for the next 3 weeks</T>}
-          </Pressable>
-          {cardOpen ? (
+        <Card pad={12} style={{ marginTop: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Pressable onPress={() => { if (canBack) { feel.tap(); setMonth(addMonths(`${month}-01`, -1).slice(0, 7)); } }} accessibilityRole="button" accessibilityLabel="Previous month" hitSlop={6} style={{ width: 44, height: 40, alignItems: 'center', justifyContent: 'center', opacity: canBack ? 1 : 0.3 }}>
+              <Icon name="chevron-left" size={22} color={th.muted} />
+            </Pressable>
+            <T size={16} weight="semi" center style={{ flex: 1 }}>{MONTHS_LONG[m - 1]} {y}</T>
+            <Pressable onPress={() => { if (canNext) { feel.tap(); setMonth(addMonths(`${month}-01`, 1).slice(0, 7)); } }} accessibilityRole="button" accessibilityLabel="Next month" hitSlop={6} style={{ width: 44, height: 40, alignItems: 'center', justifyContent: 'center', opacity: canNext ? 1 : 0.3 }}>
+              <Icon name="chevron-right" size={22} color={th.muted} />
+            </Pressable>
+          </View>
+          {fc ? <T size={11.5} color={th.faint} center style={{ marginBottom: 6 }}>{fc.account.name} at the end of each day · tap a day</T> : null}
+          <View style={{ flexDirection: 'row' }}>
+            {names.map((n, i) => <T key={i} size={11} color={th.faint} center style={{ flex: 1 }}>{n}</T>)}
+          </View>
+          {Array.from({ length: cells.length / 7 }, (_, w) => (
+            <View key={w} style={{ flexDirection: 'row', marginTop: 3 }}>
+              {cells.slice(w * 7, w * 7 + 7).map((d, i) => {
+                if (!d) return <View key={i} style={{ flex: 1 }} />;
+                const x = fc && fc.days[d];
+                const neg = x && x.end < 0;
+                const isToday = d === now;
+                const kinds = x ? [...new Set(x.items.map((it) => it.kind))].slice(0, 3) : [];
+                return (
+                  <Pressable key={d} onPress={() => { if (x) { feel.tap(); dayCalc(d); } }} accessibilityRole="button" accessibilityLabel={`${fmtShort(d, { weekday: true })}${x ? `, ${money(x.end)} at the end of the day` : ''}`}
+                    style={{ flex: 1, alignItems: 'center', paddingTop: 5, paddingBottom: 4, borderRadius: 10, gap: 1, borderWidth: isToday ? 1.5 : 0, borderColor: th.chipOn, backgroundColor: neg ? alpha(th.out, 0.12) : 'transparent', opacity: d < now ? 0.35 : 1 }}>
+                    <T size={13} weight={isToday ? 'semi' : 'regular'}>{parseYmd(d).getDate()}</T>
+                    <T size={9.5} weight={neg ? 'semi' : 'regular'} color={neg ? th.out : th.faint} numberOfLines={1}>{x ? Math.round(x.end).toLocaleString('en-NZ') : ' '}</T>
+                    <View style={{ flexDirection: 'row', gap: 2, height: 4 }}>
+                      {kinds.map((k) => <View key={k} style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: dotColor(k) }} />)}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 14, marginTop: 8 }}>
+            {[['out', 'bill'], ['in', 'pay'], ['gold', 'save']].map(([k, l]) => (
+              <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dotColor(k) }} />
+                <T size={11} color={th.faint}>{l}</T>
+              </View>
+            ))}
+          </View>
+          {!fc ? <T size={12.5} color={th.faint} center style={{ marginTop: 6 }}>Add a bank account and each day shows what it'll have.</T> : null}
+        </Card>
+
+        {asks.length ? (
           <>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14, marginHorizontal: -6 }} contentContainerStyle={{ gap: 4, paddingHorizontal: 6 }}>
-            {strip.map(({ d, dot }) => {
-              const sel = stripDay ? stripDay === d : d === now;
+            <Section title="Needs an answer" />
+            {asks.slice(0, 5).map((r) => {
+              const cat = data.categories[r.categoryId];
+              const income = r.type === 'income';
               return (
-                <Pressable key={d} onPress={() => setStripDay(stripDay === d ? null : d)} accessibilityRole="button" accessibilityLabel={`${fmtDate(d, { weekday: true, year: false })}${dot ? ', something due' : ''}`}
-                  style={{ width: 36, paddingVertical: 6, borderRadius: 12, alignItems: 'center', gap: 3, backgroundColor: sel ? (th.mode === 'dark' ? 'rgba(214,227,240,0.12)' : 'rgba(14,19,26,0.06)') : 'transparent' }}>
-                  <T size={10} color={th.faint}>{DAY_NAMES[parseYmd(d).getDay()][0]}</T>
-                  <T size={12.5} weight={sel ? 'semi' : 'regular'}>{parseYmd(d).getDate()}</T>
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dot || 'transparent' }} />
-                </Pressable>
+                <View key={r.id} style={{ borderRadius: 16, marginTop: 6, padding: 10, gap: 8, backgroundColor: th.warnSoft, borderWidth: 1, borderColor: th.warnBorder }}>
+                  <Pressable onPress={() => nav.push('record', { id: r.id })} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                    <Bubble emoji={cat && !cat.deleted ? cat.emoji : '🏷️'} color={catColor(cat)} size={36} />
+                    <View style={{ flex: 1 }}>
+                      <T size={14.5} numberOfLines={1}>{displayName(r, data)}</T>
+                      <T size={11.5} color={th.warn} numberOfLines={1}>{r.date === now ? 'Due today' : `Was due ${fmtShort(r.date, { weekday: true })}`} · {income ? 'Did it arrive?' : 'Did you pay?'}</T>
+                    </View>
+                    <Amount value={income ? r.amount : -r.amount} kind={income ? 'in' : 'out'} currency={r.currency} size={14} />
+                  </Pressable>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <Button label={income ? 'Got it' : 'Paid'} kind="amber" small style={{ flex: 1, minHeight: 40 }} onPress={() => { feel.done(); app.markPaid(r.id); }} />
+                    <Button label="Not yet" kind="soft" small style={{ flex: 1, minHeight: 40 }} onPress={() => { feel.tap(); app.askLater(r.id); }} />
+                  </View>
+                </View>
               );
             })}
-          </ScrollView>
-          {stripDay ? (
-            <View style={{ marginTop: 8 }}>
-              {stripItems.length ? stripItems.map((it) => { const rw = comingRow(it, data); return <T key={it.key} size={13} color={th.muted}>{rw.name} <T size={13} color={rw.kind === 'in' ? th.in : th.out}>{app.money(rw.value, { plus: rw.kind === 'in' })}</T></T>; })
-                : <T size={13} color={th.faint}>Nothing due {fmtDate(stripDay, { weekday: true, year: false })}</T>}
-            </View>
-          ) : null}
-        {toPay.length ? (
-          <View style={{ marginTop: 12 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><T size={13} color={th.muted}>Still to pay this month</T><T size={13} color={th.muted}>{app.money(ahead.out)}</T></View>
-            <View style={{ flexDirection: 'row', height: 12, borderRadius: 6, overflow: 'hidden', gap: 3, marginTop: 8 }}>
-              {toPay.map((it) => { const rec = itemRecord(it); return <View key={it.key} style={{ flex: Math.abs(itemEffect(it)), backgroundColor: catColor(data.categories[rec.categoryId]), opacity: it.date < now ? 1 : 0.6, borderRadius: 3 }} />; })}
-            </View>
-          </View>
-        ) : null}
           </>
-          ) : null}
-        </View>
+        ) : null}
 
-        {view === 'list' ? (
+        <Section title={seeAll ? 'Everything coming up' : `Due in ${MONTHS_LONG[m - 1]}`} action={seeAll ? 'This month only' : 'See all'} onAction={() => setSeeAll(!seeAll)} />
+        {listed.length ? (
           <>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 18, marginHorizontal: -20 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 6 }}>
-              {FILTERS.map(([f, l]) => <Chip key={f} label={l} on={filter === f} onPress={() => setFilter(f)} />)}
-            </ScrollView>
-            {filter === 'repeats' ? <View style={{ marginTop: 12, gap: 10 }}><Repeats /></View> : groups.length ? groups.map(([title, list]) => (
-              <View key={title}>
-                <Section title={title === 'Overdue' ? `⚠ ${title}` : title} />
-                {list.map(rowFor)}
-              </View>
-            )) : (
-              <Empty
-                style={{ marginTop: 12 }}
-                title="Nothing upcoming"
-                text={filter === 'people' ? 'Nobody owes you, and you don\'t owe anyone. Add it with + and People.' : 'Add a record with a later date, or set it to repeat, and it waits here until you mark it paid.'}
-                action="Add a record"
-                onAction={() => nav.push('add', filter === 'people' ? { type: 'owed' } : { upcoming: true })}
-              />
-            )}
-            {filter === 'people' ? (
-              <Pressable onPress={() => nav.setTab('Records', { type: 'people' })} accessibilityRole="button" style={{ alignSelf: 'center', padding: 8 }}>
-                <T size={14} weight="medium" color={th.chipOn}>See paid back</T>
-              </Pressable>
-            ) : null}
+            {listed.map(rowFor)}
+            <T size={12.5} color={th.faint} style={{ textAlign: 'right', marginTop: 6, marginHorizontal: 4 }}>{listed.length} {listed.length === 1 ? 'item' : 'items'} · {money(total, { plus: total > 0 })}</T>
           </>
         ) : (
-          <View style={{ gap: 12, marginTop: 16 }}>
-            <Card>
-              <Calendar month={month} onMonth={setMonth} value={day} onPick={setDay} marks={marks} weekStart={data.weekStart === 0 ? 0 : data.weekStart || 1} />
-            </Card>
-            <View>
-              <T size={13} weight="semi" color={th.muted}>{fmtDate(day, { weekday: true, year: false })}</T>
-              {dayItems.length ? dayItems.map(rowFor) : <T size={14} color={th.faint} style={{ paddingVertical: 12 }}>{day < now ? 'Nothing left from that day' : 'Nothing due'}</T>}
-            </View>
-          </View>
+          <Empty style={{ marginTop: 8 }} title="Nothing due" text="Add a record with a later date, or set it to repeat, and it waits here until you mark it paid." action="Add a record" onAction={() => nav.push('add', { upcoming: true })} />
         )}
+
+        {subs.length ? (
+          <Card pad={0} style={{ paddingHorizontal: 16, marginTop: 16 }}>
+            <Row first left={<T size={20}>🔁</T>} label="Subscriptions" sub={`${subs.length} running · ${money(subsYear)} a year`} onPress={() => setSubsOpen(!subsOpen)} right={<Icon name={subsOpen ? 'chevron-up' : 'chevron-down'} size={18} color={th.faint} />} chevron={false} />
+            {subsOpen ? subs.map(({ rep, t, year }) => {
+              const cat = data.categories[t.categoryId];
+              return <Row key={rep.id} label={`${cat && !cat.deleted ? `${cat.emoji} ` : ''}${displayName(t, data) || 'Repeat'}`} sub={`${money(t.amount, { currency: t.currency })} · ${describe(rep).toLowerCase()}`} value={`${money(year)} a year`} onPress={() => nav.push('repeat', { id: rep.id })} chevron={false} />;
+            }) : null}
+          </Card>
+        ) : null}
+        {repCount ? (
+          <Card pad={0} style={{ paddingHorizontal: 16, marginTop: 10 }}>
+            <Row first left={<T size={20}>🗓</T>} label="All repeats" sub={`${repCount} set up`} onPress={() => setRepsOpen(!repsOpen)} right={<Icon name={repsOpen ? 'chevron-up' : 'chevron-down'} size={18} color={th.faint} />} chevron={false} />
+          </Card>
+        ) : null}
+        {repsOpen ? <View style={{ marginTop: 8, gap: 10 }}><Repeats /></View> : null}
       </ScrollView>
     </View>
   );

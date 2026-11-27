@@ -3,12 +3,15 @@
 // the balance line across the bottom with the jars in gold, Bank / Cash / 🫙
 // pills, and Move, Count and + buttons. Faint money drawings sit behind it.
 // Bag jar (2x2): what's in the jars and this month's saving.
+// Bag small (2x1): everything in one row's height: the balance, what's free
+// to spend, Bank · Cash · jar, and the line faint behind. No + button.
 import React from 'react';
 import { FlexWidget, OverlapWidget, SvgWidget, TextWidget } from 'react-native-android-widget';
-import { drawingsSvg, jarSvg, wideLineSvg } from './model';
+import { drawingsSvg, jarIconSvg, jarSvg, wideLineSvg } from './model';
 
 export const WIDGET_NAME = 'Bag';
 export const JAR_WIDGET = 'BagJar';
+export const SMALL_WIDGET = 'BagSmall';
 
 const SERIF = 'Fraunces_400Regular';
 const COLORS = {
@@ -61,7 +64,10 @@ function Body({ m, c, size }) {
         <FlexWidget style={{ width: 'match_parent', flexDirection: 'row', alignItems: 'center', flexGap: 6 }}>
           {m.groups.slice(0, 3).map((g) => (
             <FlexWidget key={g.id} {...link(g.link)} style={{ backgroundColor: g.id === 'savings' ? c.goldSoft : c.card, borderRadius: 11, paddingHorizontal: 9, paddingVertical: 6 }}>
-              <TextWidget text={g.text} style={{ fontSize: 12, color: g.negative ? c.out : g.id === 'savings' ? c.gold : c.ink }} maxLines={1} />
+              <FlexWidget style={{ flexDirection: 'row', alignItems: 'center', flexGap: 4 }}>
+                {g.id === 'savings' ? <SvgWidget svg={jarIconSvg(c.gold, 11)} style={{ width: 11, height: 13 }} /> : <TextWidget text={g.emoji} style={{ fontSize: 12 }} />}
+                <TextWidget text={g.text.slice(g.emoji.length).trim()} style={{ fontSize: 12, color: g.negative ? c.out : g.id === 'savings' ? c.gold : c.ink }} maxLines={1} />
+              </FlexWidget>
             </FlexWidget>
           ))}
           <FlexWidget style={{ flex: 1 }} />
@@ -116,7 +122,7 @@ function Jar({ m, c }) {
       <OverlapWidget style={{ width: 64, height: 64 }}>
         <SvgWidget svg={ring} style={{ width: 64, height: 64 }} />
         <FlexWidget style={{ width: 64, height: 64, alignItems: 'center', justifyContent: 'center' }}>
-          <TextWidget text="🫙" style={{ fontSize: 24 }} />
+          <SvgWidget svg={jarIconSvg(c.gold, 24)} style={{ width: 24, height: 28 }} />
         </FlexWidget>
       </OverlapWidget>
       <TextWidget text={m.jarText} style={{ fontSize: 20, color: c.gold, fontFamily: SERIF }} maxLines={1} adjustsFontSizeToFit />
@@ -128,10 +134,39 @@ function Jar({ m, c }) {
   );
 }
 
+function Small({ m, c, size }) {
+  const W = Math.max(140, Math.round(size.width || 180));
+  const H = Math.max(56, Math.round(size.height || 80));
+  const line = wideLineSvg(m.line, null, { ink: c.spark, fut: c.fut, neg: c.out, goldColor: c.gold, width: W, height: Math.round(H * 0.4) });
+  const big = H >= 100;
+  return (
+    <OverlapWidget {...link('bag://home')} style={{ height: 'match_parent', width: 'match_parent', backgroundColor: c.bg, borderRadius: 22 }}>
+      <FlexWidget style={{ height: 'match_parent', width: 'match_parent', justifyContent: 'flex-end' }}>
+        <SvgWidget svg={line.replace('<svg ', '<svg opacity="0.45" ')} style={{ width: W, height: Math.round(H * 0.4) }} />
+      </FlexWidget>
+      <FlexWidget {...link('bag://home')} style={{ height: 'match_parent', width: 'match_parent', borderRadius: 22, borderWidth: 1, borderColor: c.border, paddingHorizontal: 11, paddingVertical: 8, justifyContent: 'center' }}>
+        <TextWidget text={m.balanceText} style={{ fontSize: big ? 30 : 22, color: m.balance < 0 ? c.out : c.ink, fontFamily: SERIF }} maxLines={1} adjustsFontSizeToFit />
+        <FlexWidget style={{ flexDirection: 'row', marginTop: 2 }}>
+          <TextWidget text={m.spendText} style={{ fontSize: big ? 13 : 10.5, color: m.spend < 0 ? c.out : c.ink, fontWeight: '600' }} maxLines={1} />
+          <TextWidget text=" to spend" style={{ fontSize: big ? 13 : 10.5, color: c.muted }} maxLines={1} />
+        </FlexWidget>
+        <FlexWidget style={{ flexDirection: 'row', flexGap: 4, marginTop: big ? 8 : 5 }}>
+          {m.groups.slice(0, 3).map((g) => (
+            <FlexWidget key={g.id} {...link(g.link)} style={{ flexDirection: 'row', alignItems: 'center', flexGap: 3, backgroundColor: c.card, borderRadius: 7, paddingHorizontal: 5, paddingVertical: 2 }}>
+              {g.id === 'savings' ? <SvgWidget svg={jarIconSvg(c.gold, big ? 11 : 8)} style={{ width: big ? 11 : 8, height: big ? 13 : 10 }} /> : <TextWidget text={g.emoji} style={{ fontSize: big ? 12 : 9.5 }} />}
+              <TextWidget text={g.text.slice(g.emoji.length).trim()} style={{ fontSize: big ? 12 : 9.5, color: g.negative ? c.out : g.id === 'savings' ? c.gold : c.ink }} maxLines={1} />
+            </FlexWidget>
+          ))}
+        </FlexWidget>
+      </FlexWidget>
+    </OverlapWidget>
+  );
+}
+
 // Light and dark versions; Android picks one to match the phone, unless
 // Bag is set to always light or always dark.
 export function renderBagWidget(model, size, themeMode, name = WIDGET_NAME) {
-  const make = (k) => (model.locked ? <Locked c={COLORS[k]} /> : name === JAR_WIDGET ? <Jar m={model} c={COLORS[k]} /> : <Body m={model} c={COLORS[k]} size={size} />);
+  const make = (k) => (model.locked ? <Locked c={COLORS[k]} /> : name === JAR_WIDGET ? <Jar m={model} c={COLORS[k]} /> : name === SMALL_WIDGET ? <Small m={model} c={COLORS[k]} size={size} /> : <Body m={model} c={COLORS[k]} size={size} />);
   if (themeMode === 'light') return make('light');
   if (themeMode === 'dark') return make('dark');
   return { light: make('light'), dark: make('dark') };

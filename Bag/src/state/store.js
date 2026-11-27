@@ -12,7 +12,7 @@ import { resolveTheme } from '../theme/palettes';
 import { newId, repeatRecordId } from '../lib/ids';
 import { addDays, daysBetween, today as todayYmd } from '../lib/dates';
 import { fmt, fmtMoney, round2 } from '../lib/money';
-import { allFlows, defaultKind, unpayAutoCounted, upgradeRecords } from '../lib/ledger';
+import { allFlows, defaultKind, leftOf, unpayAutoCounted, upgradeRecords } from '../lib/ledger';
 import { materialise } from '../lib/repeats';
 import { ensureRates, latestRate, loadRates, savedRate } from '../lib/rates';
 import { mergeSync, purgeTombstones, stampChanges, syncPayload, COLLECTIONS, WHOLE_FIELDS } from '../lib/sync';
@@ -87,6 +87,12 @@ export const DEFAULTS = {
   widget: { under: 'by', coming: true }, // what the home screen widget shows
   seenNew: null, // the version whose What's new you've seen
   nudgedWeek: null,
+  // 2.3
+  typeDefaults: {}, // { expense, income, moveFrom, moveTo, saveFrom, saveTo } -> account id (★)
+  travel: { on: false, currency: 'BDT' }, // new records start in this currency
+  nextUpDays: 7, // Home › Next up looks this many days ahead
+  lowWarn: { on: true, days: 3 }, // tell me before a balance goes below 0
+  evening: { on: true, time: '21:00' }, // "log today?" on days with nothing added
 };
 
 function initialData() {
@@ -131,6 +137,7 @@ function upgradeLook(d) {
       if (!cur.color) patch.color = c.color;
       if (c.id === 'bills' && cur.name === 'Bills and other') patch.name = 'Bills';
       if (c.id === 'clothing' && cur.name === 'Clothing and accessories') patch.name = 'Clothing';
+      if (c.id === 'untracked-in' && cur.name === 'Untracked') patch.name = 'Untracked (in)';
       if (Object.keys(patch).length) categories[c.id] = { ...cur, ...patch, updatedAt: t };
     }
   });
@@ -442,6 +449,41 @@ export function AppProvider({ children }) {
     showToast(prev.type === 'iowe' ? 'Marked paid back' : 'Marked got it back', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
   }, [showToast, restore]);
 
+  // Pay some of a debt back, from one account or several (split). Each part
+  // is { date, accountId, amount, currency }. Done in full = settled.
+  const payDebt = useCallback((id, parts) => {
+    const d = dataRef.current;
+    const prev = d.records[id];
+    if (!prev || prev.deleted) return;
+    const home = d.homeCurrency;
+    const debtRate = prev.currency === home ? 1 : Number(prev.rate) || savedRate(todayYmd(), prev.currency, home) || latestRate(prev.currency, home) || 1;
+    const add = parts.filter((p) => Number(p.amount) > 0).map((p) => {
+      const cur = p.currency || prev.currency;
+      const rate = cur === home ? 1 : savedRate(p.date, cur, home) || latestRate(cur, home) || null;
+      const debtAmount = cur === prev.currency ? Number(p.amount) : round2((Number(p.amount) * (rate || 0)) / debtRate);
+      return { id: newId('y'), date: p.date, accountId: p.accountId || null, amount: round2(Number(p.amount)), currency: cur, rate, debtAmount: round2(debtAmount) };
+    });
+    if (!add.length) return;
+    let next = { ...prev, payments: [...(prev.payments || []), ...add], updatedAt: now() };
+    const done = leftOf(next) <= 0.004;
+    if (done) {
+      const last = add[add.length - 1];
+      next = { ...next, status: 'settled', settledDate: add.reduce((m, p) => (p.date > m ? p.date : m), last.date), settledAccountId: last.accountId };
+    }
+    setData((cur) => ({ ...cur, records: { ...cur.records, [id]: next } }));
+    showToast(done ? (prev.type === 'iowe' ? 'All paid back 🎉' : 'All back 🎉') : `Paid. ${fmt(leftOf(next))} ${prev.currency} left`, { label: 'Undo', onPress: () => restore({ [id]: prev }) });
+  }, [showToast, restore]);
+
+  const removePayment = useCallback((id, pid) => {
+    const d = dataRef.current;
+    const prev = d.records[id];
+    if (!prev) return;
+    const next = { ...prev, payments: (prev.payments || []).filter((p) => p.id !== pid), updatedAt: now() };
+    if (next.status === 'settled' && leftOf({ ...next, status: 'open' }) > 0.004) { next.status = 'open'; next.settledDate = null; next.settledAccountId = null; }
+    setData((cur) => ({ ...cur, records: { ...cur.records, [id]: next } }));
+    showToast('Payment removed', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
+  }, [showToast, restore]);
+
   const reopenRecord = useCallback((id) => {
     setData((cur) => {
       const r = cur.records[id];
@@ -492,6 +534,21 @@ export function AppProvider({ children }) {
     setData((cur) => ({ ...cur, records: { ...cur.records, [id]: { ...prev, status: 'skipped', updatedAt: now() } } }));
     showToast('Skipped this time', { label: 'Undo', onPress: () => restore({ [id]: prev }) });
   }, [showToast, restore]);
+
+  // Next up: a repeat's coming date, paid early (today) or skipped. The
+  // record takes that date's id, so the repeat won't make it again.
+  const answerRepeat = useCallback((repId, date, paid) => {
+    const d = dataRef.current;
+    const rep = d.repeats[repId];
+    if (!rep) return;
+    const id = repeatRecordId(repId, date);
+    if (d.records[id]) { if (paid) confirmPending(id, { date: todayYmd() }); else skipPending(id); return; }
+    const t = rep.template || {};
+    const stamp = now();
+    const rec = { ...t, id, amount: t.amount, date: paid ? todayYmd() : date, repeatId: repId, status: paid ? (t.type === 'income' ? 'received' : 'paid') : 'skipped', createdAt: stamp, updatedAt: stamp };
+    setData((cur) => ({ ...cur, records: { ...cur.records, [id]: rec } }));
+    showToast(paid ? `${t.name || 'Paid'}: marked paid` : 'Skipped this time', { label: 'Undo', onPress: () => setData((cur) => ({ ...cur, records: { ...cur.records, [id]: { ...rec, date, status: 'pending', updatedAt: now() } } })) });
+  }, [showToast, confirmPending, skipPending]);
 
   const duplicateRecord = useCallback((id) => {
     const d = dataRef.current;
@@ -828,7 +885,7 @@ export function AppProvider({ children }) {
     if (!data || !data.onboarded || Platform.OS === 'web') return undefined;
     const h = setTimeout(() => scheduleAll(dataRef.current), 1500);
     return () => clearTimeout(h);
-  }, [data && data.records, data && data.repeats, data && data.reminders, data && data.onboarded, data && data.paydays, data && data.paydayDone, data && data.budgets]);
+  }, [data && data.records, data && data.repeats, data && data.reminders, data && data.onboarded, data && data.paydays, data && data.paydayDone, data && data.budgets, data && data.lowWarn, data && data.evening, data && data.margin, data && data.accounts]);
 
   /* ------------------------------ Derived ------------------------------ */
   const mode = data && data.themeMode !== 'auto' ? data.themeMode : scheme === 'dark' ? 'dark' : 'light';
@@ -875,7 +932,7 @@ export function AppProvider({ children }) {
   const value = useMemo(() => ({
     data, hydrated: !!data, update, theme, flows, money, second, homePerUnit, ratesVersion, refreshRates,
     toast, setToast, showToast, locked, tryUnlock, syncing, pendingOpen, setPendingOpen,
-    saveRecord, deleteRecord, patchRecords, deleteRecords, settleRecord, reopenRecord, confirmPending, markPaid, unpay, askLater, skipPending, duplicateRecord,
+    saveRecord, deleteRecord, patchRecords, deleteRecords, settleRecord, payDebt, removePayment, reopenRecord, confirmPending, markPaid, unpay, askLater, skipPending, answerRepeat, duplicateRecord,
     saveCategory, deleteCategory, saveAccount, deleteAccount, saveBudget, deleteBudget, saveGoal, deleteGoal, saveRepeat, deleteRepeat,
     applyImport, restoreData, syncNow, backupNow, signInGoogle, signOutGoogle, runRepeats, addPhoto, removePhoto,
     saveCheck, confirmPayday, paydayLater, paydaySkip,

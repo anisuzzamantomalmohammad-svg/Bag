@@ -19,6 +19,8 @@ export default function Accounts() {
   const nav = useNav();
   const th = useTheme();
   const { data, flows, homePerUnit } = app;
+  // Share of the money you actually have: an overdrawn bank doesn't push others over 100%.
+  const pos = (() => { try { return live(app.data.accounts).reduce((t, a) => { const h = accountBalance(app.data, a, { flows: app.flows, homePerUnit: app.homePerUnit }).home; return t + (h > 0 ? h : 0); }, 0); } catch (e) { return 0; } })();
   const [showWorth, setShowWorth] = useState(false);
   const [history, setHistory] = useState(false);
   const home = data.homeCurrency;
@@ -51,7 +53,7 @@ export default function Accounts() {
       {rows.length ? rows.map(({ a, bal }) => {
         const foreign = a.currency && a.currency !== home;
         const col = accountColor(a);
-        const share = total > 0 && bal.home > 0 ? bal.home / total : 0;
+        const share = pos > 0 && bal.home > 0 ? bal.home / pos : 0;
         return (
           <Squish key={a.id} onPress={() => nav.push('account', { id: a.id })} accessibilityLabel={`${a.name}, ${app.money(bal.native, { currency: a.currency })}`} style={{ borderRadius: 24, overflow: 'hidden', backgroundColor: th.card, padding: 18 }}>
             <Svg style={{ position: 'absolute', top: 0, left: 0 }} width="100%" height="100%" pointerEvents="none">

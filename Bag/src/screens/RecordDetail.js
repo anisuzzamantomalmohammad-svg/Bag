@@ -1,14 +1,14 @@
 // One record. Tap the name, amount, category, date or account to change it
 // right here; the pencil opens the full form for repeats and splits.
 import React, { useMemo, useState } from 'react';
-import { Image, Modal, View } from 'react-native';
+import { Alert, Image, Modal, Platform, View } from 'react-native';
 import { useApp } from '../state/store';
 import { useNav } from '../nav';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Bubble, Button, Card, Row, Screen, T, useTheme, Press as Pressable } from '../ui/kit';
 import { accountEmoji, catColor } from '../lib/look';
 import { IconButton, RecordRow, recordAmount, recordEmoji, useRecordActions } from '../ui/parts';
-import { TYPE_LABEL, displayName, flowsOf, homeOf, isOpen, isPending, kindOf, liveRecords, statusOf, byNewest } from '../lib/ledger';
+import { TYPE_LABEL, displayName, flowsOf, homeOf, isOpen, isPending, kindOf, leftOf, liveRecords, paidOf, paymentsOf, rateOf, statusOf, byNewest } from '../lib/ledger';
 import { describe } from '../lib/repeats';
 import { fmtDate, ymd } from '../lib/dates';
 import { fmt, fmtApprox, parseAmount } from '../lib/money';
@@ -90,7 +90,7 @@ export default function RecordDetail({ id }) {
           <T size={18} weight="semi" center>{displayName(r, data)}</T>
         </Pressable>
         <Pressable onPress={editAmount} accessibilityRole="button" accessibilityLabel="Amount. Tap to change" hitSlop={4}>
-          <T size={38} serif color={color} style={{ letterSpacing: -0.3 }}>{app.money(amt.value, { currency: r.currency, plus: amt.kind === 'in' })}</T>
+          <T size={38} serif color={color} style={{ letterSpacing: -0.3 }}>{app.money(amt.value, { currency: r.currency, plus: amt.kind === 'in', decimals: Math.abs(amt.value) >= 100000 ? 0 : undefined })}</T>
         </Pressable>
         {foreign ? <T size={13} color={r.rate === null ? th.warn : th.faint}>{r.rate === null ? 'Rate not in yet: not counted until it comes in, or tap Edit to type one' : `≈ ${app.money(homeOf(r))} ${home} at ${fmt(r.rate, { decimals: 4 })}${r.rateCheck ? ' · rate to check' : ''}`}</T>
           : sec ? <T size={13} color={th.faint}>{fmtApprox(sec.amount, sec.currency)}</T> : null}
@@ -110,7 +110,52 @@ export default function RecordDetail({ id }) {
         </>
       ) : null}
       {money && !pending && r.status !== 'skipped' ? <Button label={r.type === 'income' ? 'Not received yet' : r.type === 'transfer' ? 'Not moved yet' : 'Not paid yet'} kind="secondary" onPress={() => app.unpay(r.id)} /> : null}
-      {open ? <Button label={r.type === 'iowe' ? 'Mark paid back' : 'Mark got it back'} onPress={() => nav.openSheet('settle', { id: r.id })} /> : null}
+      {debt ? (() => {
+        const left = leftOf(r);
+        const paid = paidOf(r);
+        const share = r.amount > 0 ? Math.min(1, (r.status === 'settled' ? r.amount : paid) / r.amount) : 0;
+        const pays = paymentsOf(r).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+        const removeP = (p) => {
+          const go = () => app.removePayment(r.id, p.id);
+          if (Platform.OS === 'web') { go(); return; }
+          Alert.alert('Remove this payment?', `${app.money(p.amount, { currency: p.currency })} on ${fmtDate(p.date)}`, [{ text: 'Keep', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: go }]);
+        };
+        return (
+          <>
+            <Card style={{ alignItems: 'center' }}>
+              <T size={11} color={th.faint} style={{ letterSpacing: 1.4 }}>{r.type === 'iowe' ? 'LEFT TO PAY' : 'LEFT TO GET BACK'}</T>
+              <T serif size={32}>{app.money(left, { currency: r.currency, decimals: left >= 100000 ? 0 : undefined })}</T>
+              {foreign && left > 0 ? <T size={13} color={th.faint}>≈ {app.money(left * rateOf(r))} {home}{r.dueDate ? ` · by ${fmtDate(r.dueDate, { year: true })}` : ''}</T> : r.dueDate && left > 0 ? <T size={13} color={th.faint}>by {fmtDate(r.dueDate, { year: true })}</T> : null}
+              <View style={{ alignSelf: 'stretch', height: 8, borderRadius: 4, backgroundColor: th.soft, overflow: 'hidden', marginTop: 12 }}>
+                <View style={{ width: `${Math.round(share * 1000) / 10}%`, height: '100%', borderRadius: 4, backgroundColor: th.in }} />
+              </View>
+              <T size={12.5} color={th.muted} style={{ marginTop: 6 }}>{app.money(r.status === 'settled' ? r.amount : paid, { currency: r.currency, decimals: r.amount >= 100000 ? 0 : undefined })} {r.type === 'iowe' ? 'paid' : 'back'} of {app.money(r.amount, { currency: r.currency, decimals: r.amount >= 100000 ? 0 : undefined })} · {Math.round(share * 100)}%</T>
+            </Card>
+            {open ? <Button label={r.type === 'iowe' ? 'Pay some back' : 'Got some back'} onPress={() => nav.openSheet('paydebt', { id: r.id })} /> : null}
+            {open ? (
+              <Pressable onPress={() => nav.openSheet('settle', { id: r.id })} accessibilityRole="button" hitSlop={6} style={{ alignSelf: 'center', marginTop: -4 }}>
+                <T size={13} weight="medium" color={th.accent}>{r.type === 'iowe' ? 'Paid it all back' : 'Got it all back'}</T>
+              </Pressable>
+            ) : null}
+            {pays.length ? (
+              <>
+                <T size={13} weight="semi" color={th.muted} style={{ marginHorizontal: 4 }}>{r.type === 'iowe' ? 'Paid back' : 'Got back'}</T>
+                <Card pad={0} style={{ paddingHorizontal: 16 }}>
+                  {pays.map((p, i) => {
+                    const a = p.accountId ? data.accounts[p.accountId] : null;
+                    return (
+                      <Row key={p.id} first={i === 0} label={a ? `${r.type === 'iowe' ? 'From' : 'Into'} ${a.name}` : 'Not from an account'}
+                        sub={`${fmtDate(p.date, { weekday: true, year: false })}${p.currency !== r.currency ? ` · ${app.money(p.amount, { currency: p.currency })}` : ''}`}
+                        value={app.money(p.debtAmount, { currency: r.currency })} valueColor={th.in} onPress={() => removeP(p)} chevron={false} />
+                    );
+                  })}
+                </Card>
+                <T size={12} color={th.faint} style={{ marginHorizontal: 4 }}>Each one is a {r.type === 'iowe' ? 'Cash out from' : 'Cash in to'} that account on that day. Tap one to remove it.</T>
+              </>
+            ) : null}
+          </>
+        );
+      })() : null}
       {debt && r.status === 'settled' ? <Button label={r.type === 'iowe' ? 'Not paid back yet' : 'Not back yet'} kind="secondary" onPress={() => app.reopenRecord(r.id)} /> : null}
 
       <Card pad={0} style={{ paddingHorizontal: 16 }}>
@@ -125,7 +170,7 @@ export default function RecordDetail({ id }) {
             <Row label="To" value={toAcc ? `${an(toAcc)}${r.toAmount ? ` · ${app.money(r.toAmount, { currency: r.toCurrency })}` : ''}` : '?'} onPress={() => editAccount('toAccountId', 'To', [r.accountId])} />
           </>
         ) : (
-          <Row label={r.type === 'income' || (r.type === 'iowe' && kindOf(r) === 'borrowed') ? 'Into' : r.type === 'owed' && kindOf(r) === 'work' ? 'Into' : 'Paid from'} value={an(acc)} onPress={() => editAccount('accountId', 'Account')} />
+          debt && !acc ? <Row label="Account" value="None, just keeping track" /> : <Row label={r.type === 'income' || (r.type === 'iowe' && kindOf(r) === 'borrowed') ? 'Into' : r.type === 'owed' && kindOf(r) === 'work' ? 'Into' : 'Paid from'} value={an(acc)} onPress={() => editAccount('accountId', 'Account')} />
         )}
         {r.status === 'settled' && settleAcc && settleAcc.id !== r.accountId ? <Row label={r.type === 'iowe' ? 'Paid from' : 'Paid into'} value={settleAcc.name} /> : null}
         {rep ? <Row label="Repeats" value={rep.deleted ? 'Stopped' : rep.paused ? 'Paused' : describe(rep)} onPress={!rep.deleted ? () => nav.push('repeat', { id: rep.id }) : undefined} /> : null}
